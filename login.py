@@ -161,200 +161,205 @@ def draw_clouds():
 
 
 # ─── Main Loop ───
-result = None
-running = True
+def run_login_screen():
+    global username, username_active, selected_hue, dragging_color
+    global error_msg, binding_active, key_error_msg, keys_map, key_names
+    result = None
+    running = True
 
-while running:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            mx, my = event.pos
-            bar_rect = pygame.Rect(BAR_X, BAR_Y, BAR_W, BAR_H)
-            user_rect = pygame.Rect(USER_X, USER_Y, USER_W, USER_H)
-            join_rect = pygame.Rect(JOIN_X, BTN_Y, BTN_W, BTN_H)
-            exit_rect = pygame.Rect(EXIT_X, BTN_Y, BTN_W, BTN_H)
-
-            if bar_rect.collidepoint(mx, my):
-                dragging_color = True
-            if user_rect.collidepoint(mx, my):
-                username_active = True
-                binding_active = None
-            else:
-                username_active = False
-
-            # Key binding boxes
-            for idx, key_name in enumerate(["UP", "DOWN", "LEFT", "RIGHT"]):
-                bx = KEYS_X + idx * (KEY_BOX_W + KEY_GAP)
-                box = pygame.Rect(bx, KEYS_Y, KEY_BOX_W, KEY_BOX_H)
-                if box.collidepoint(mx, my):
-                    binding_active = key_name
-                    username_active = False
-
-            if join_rect.collidepoint(mx, my):
-                if username.strip():
-                    result = {"username": username.strip(), "color": get_color(), "keys": keys_map}
-                    running = False
-                else:
-                    error_msg = "Please enter a username"
-            if exit_rect.collidepoint(mx, my):
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
                 running = False
 
-        elif event.type == pygame.MOUSEBUTTONUP:
-            dragging_color = False
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                mx, my = event.pos
+                bar_rect = pygame.Rect(BAR_X, BAR_Y, BAR_W, BAR_H)
+                user_rect = pygame.Rect(USER_X, USER_Y, USER_W, USER_H)
+                join_rect = pygame.Rect(JOIN_X, BTN_Y, BTN_W, BTN_H)
+                exit_rect = pygame.Rect(EXIT_X, BTN_Y, BTN_W, BTN_H)
 
-        elif event.type == pygame.MOUSEMOTION and dragging_color:
-            mx = max(BAR_X, min(event.pos[0], BAR_X + BAR_W))
-            selected_hue = (mx - BAR_X) / BAR_W
+                if bar_rect.collidepoint(mx, my):
+                    dragging_color = True
+                if user_rect.collidepoint(mx, my):
+                    username_active = True
+                    binding_active = None
+                else:
+                    username_active = False
 
-        elif event.type == pygame.KEYDOWN:
-            if binding_active:
-                duplicate = False
-                for dir_name, existing_key in keys_map.items():
-                    if dir_name != binding_active and existing_key == event.key:
-                        key_error_msg = f"'{pygame.key.name(event.key)}' already used for {dir_name}"
-                        duplicate = True
-                        break
-                if not duplicate:
-                    keys_map[binding_active] = event.key
-                    key_names[binding_active] = pygame.key.name(event.key).upper()
-                    key_error_msg = ""
-                binding_active = None
-            elif username_active:
-                error_msg = ""
-                if event.key == pygame.K_BACKSPACE:
-                    username = username[:-1]
-                elif event.key == pygame.K_RETURN and username.strip():
-                    result = {"username": username.strip(), "color": get_color(), "keys": keys_map}
+                # Key binding boxes
+                for idx, key_name in enumerate(["UP", "DOWN", "LEFT", "RIGHT"]):
+                    bx = KEYS_X + idx * (KEY_BOX_W + KEY_GAP)
+                    box = pygame.Rect(bx, KEYS_Y, KEY_BOX_W, KEY_BOX_H)
+                    if box.collidepoint(mx, my):
+                        binding_active = key_name
+                        username_active = False
+
+                if join_rect.collidepoint(mx, my):
+                    if username.strip():
+                        result = {"username": username.strip(), "color": get_color(), "keys": keys_map}
+                        running = False
+                    else:
+                        error_msg = "Please enter a username"
+                if exit_rect.collidepoint(mx, my):
                     running = False
-                elif len(username) < 15 and event.unicode.isprintable():
-                    username += event.unicode
 
-    # ─── Draw ───
+            elif event.type == pygame.MOUSEBUTTONUP:
+                dragging_color = False
 
-    # Sky
-    screen.fill(SKY_BLUE)
+            elif event.type == pygame.MOUSEMOTION and dragging_color:
+                mx = max(BAR_X, min(event.pos[0], BAR_X + BAR_W))
+                selected_hue = (mx - BAR_X) / BAR_W
 
-    # Clouds (behind everything)
-    draw_clouds()
+            elif event.type == pygame.KEYDOWN:
+                if binding_active:
+                    duplicate = False
+                    for dir_name, existing_key in keys_map.items():
+                        if dir_name != binding_active and existing_key == event.key:
+                            key_error_msg = f"'{pygame.key.name(event.key)}' already used for {dir_name}"
+                            duplicate = True
+                            break
+                    if not duplicate:
+                        keys_map[binding_active] = event.key
+                        key_names[binding_active] = pygame.key.name(event.key).upper()
+                        key_error_msg = ""
+                    binding_active = None
+                elif username_active:
+                    error_msg = ""
+                    if event.key == pygame.K_BACKSPACE:
+                        username = username[:-1]
+                    elif event.key == pygame.K_RETURN and username.strip():
+                        result = {"username": username.strip(), "color": get_color(), "keys": keys_map}
+                        running = False
+                    elif len(username) < 15 and event.unicode.isprintable():
+                        username += event.unicode
 
-    # Ground at bottom
-    screen.blit(ground_img, (0, HEIGHT - GROUND_HEIGHT))
+        # ─── Draw ───
 
-    # ─── Title ───
-    title = title_font.render("Πthon Arena", True, (0, 0, 0)) #black color
-    shadow = title_font.render("Πthon Arena", True, (80, 80, 80)) #gray shadow
-    screen.blit(shadow, (CX - title.get_width()//2 + 2, 16))  #lower the 30 and 28 to get the title higher on the screen
-    screen.blit(title, (CX - title.get_width()//2, 14))   
+        # Sky
+        screen.fill(SKY_BLUE)
 
-    subtitle = label_font.render("Design your snake, then join the battle!", True, (40, 80, 40))
-    screen.blit(subtitle, (CX - subtitle.get_width()//2, 90))
+        # Clouds (behind everything)
+        draw_clouds()
 
-    # ─── Username ───
-    ulabel = label_font.render("Username", True, (40, 60, 40))
-    screen.blit(ulabel, (USER_X, USER_Y - 20))
+        # Ground at bottom
+        screen.blit(ground_img, (0, HEIGHT - GROUND_HEIGHT))
 
-    uborder = (0, 180, 160) if username_active else (100, 130, 100)
-    user_rect = pygame.Rect(USER_X, USER_Y, USER_W, USER_H)
-    pygame.draw.rect(screen, (255, 255, 255, 200), user_rect, border_radius=8)
-    pygame.draw.rect(screen, uborder, user_rect, 2, border_radius=8)
+        # ─── Title ───
+        title = title_font.render("Πthon Arena", True, (0, 0, 0)) #black color
+        shadow = title_font.render("Πthon Arena", True, (80, 80, 80)) #gray shadow
+        screen.blit(shadow, (CX - title.get_width()//2 + 2, 16))  #lower the 30 and 28 to get the title higher on the screen
+        screen.blit(title, (CX - title.get_width()//2, 14))   
 
-    utext = input_font.render(username, True, BLACK)
-    screen.blit(utext, (USER_X + 12, USER_Y + USER_H//2 - utext.get_height()//2))
+        subtitle = label_font.render("Design your snake, then join the battle!", True, (40, 80, 40))
+        screen.blit(subtitle, (CX - subtitle.get_width()//2, 90))
 
-    if username_active and pygame.time.get_ticks() % 1000 < 500:
-        cur_x = USER_X + 12 + utext.get_width() + 2
-        pygame.draw.line(screen, BLACK, (cur_x, USER_Y + 8), (cur_x, USER_Y + USER_H - 8), 2)
+        # ─── Username ───
+        ulabel = label_font.render("Username", True, (40, 60, 40))
+        screen.blit(ulabel, (USER_X, USER_Y - 20))
 
-    if not username and not username_active:
-        ph = input_font.render("Enter your name...", True, (150, 150, 150))
-        screen.blit(ph, (USER_X + 12, USER_Y + USER_H//2 - ph.get_height()//2))
+        uborder = (0, 180, 160) if username_active else (100, 130, 100)
+        user_rect = pygame.Rect(USER_X, USER_Y, USER_W, USER_H)
+        pygame.draw.rect(screen, (255, 255, 255, 200), user_rect, border_radius=8)
+        pygame.draw.rect(screen, uborder, user_rect, 2, border_radius=8)
 
-    # Error message
-    if error_msg:
-        err = label_font.render(error_msg, True, (200, 30, 30))
-        screen.blit(err, (USER_X, USER_Y + USER_H + 5))
+        utext = input_font.render(username, True, BLACK)
+        screen.blit(utext, (USER_X + 12, USER_Y + USER_H//2 - utext.get_height()//2))
 
-    # ─── Color Picker ───
-    clabel = label_font.render("Snake Color", True, (40, 60, 40))
-    screen.blit(clabel, (BAR_X, BAR_Y - 20))
+        if username_active and pygame.time.get_ticks() % 1000 < 500:
+            cur_x = USER_X + 12 + utext.get_width() + 2
+            pygame.draw.line(screen, BLACK, (cur_x, USER_Y + 8), (cur_x, USER_Y + USER_H - 8), 2)
 
-    screen.blit(hue_bar, (BAR_X, BAR_Y))
-    pygame.draw.rect(screen, (100, 130, 100), (BAR_X, BAR_Y, BAR_W, BAR_H), 2, border_radius=3)
+        if not username and not username_active:
+            ph = input_font.render("Enter your name...", True, (150, 150, 150))
+            screen.blit(ph, (USER_X + 12, USER_Y + USER_H//2 - ph.get_height()//2))
 
-    # Cursor
-    cx = BAR_X + int(selected_hue * BAR_W)
-    pygame.draw.rect(screen, WHITE, (cx - 3, BAR_Y - 3, 6, BAR_H + 6), border_radius=2)
-    pygame.draw.rect(screen, BLACK, (cx - 3, BAR_Y - 3, 6, BAR_H + 6), 1, border_radius=2)
+        # Error message
+        if error_msg:
+            err = label_font.render(error_msg, True, (200, 30, 30))
+            screen.blit(err, (USER_X, USER_Y + USER_H + 5))
 
-    # Snake preview
-    preview_x = CX - (6 * 21) // 2
-    draw_snake_preview(screen, preview_x, PREVIEW_Y, get_color())
+        # ─── Color Picker ───
+        clabel = label_font.render("Snake Color", True, (40, 60, 40))
+        screen.blit(clabel, (BAR_X, BAR_Y - 20))
 
-    # ─── Key Bindings ───
-    klabel = label_font.render("Controls, click to change then press the desired key", True, (40, 60, 40))
-    screen.blit(klabel, (KEYS_X, KEYS_Y - 20))
+        screen.blit(hue_bar, (BAR_X, BAR_Y))
+        pygame.draw.rect(screen, (100, 130, 100), (BAR_X, BAR_Y, BAR_W, BAR_H), 2, border_radius=3)
 
-    for idx, key_name in enumerate(["UP", "DOWN", "LEFT", "RIGHT"]):
-        bx = KEYS_X + idx * (KEY_BOX_W + KEY_GAP)
-        box = pygame.Rect(bx, KEYS_Y, KEY_BOX_W, KEY_BOX_H)
+        # Cursor
+        cx = BAR_X + int(selected_hue * BAR_W)
+        pygame.draw.rect(screen, WHITE, (cx - 3, BAR_Y - 3, 6, BAR_H + 6), border_radius=2)
+        pygame.draw.rect(screen, BLACK, (cx - 3, BAR_Y - 3, 6, BAR_H + 6), 1, border_radius=2)
 
-        is_active = binding_active == key_name
-        fill = (0, 180, 160) if is_active else WHITE
-        border = CYAN if is_active else (100, 130, 100)
+        # Snake preview
+        preview_x = CX - (6 * 21) // 2
+        draw_snake_preview(screen, preview_x, PREVIEW_Y, get_color())
 
-        pygame.draw.rect(screen, fill, box, border_radius=6)
-        pygame.draw.rect(screen, border, box, 2, border_radius=6)
+        # ─── Key Bindings ───
+        klabel = label_font.render("Controls, click to change then press the desired key", True, (40, 60, 40))
+        screen.blit(klabel, (KEYS_X, KEYS_Y - 20))
 
-        dir_text = key_label_font.render(key_name, True, (80, 80, 80))
-        screen.blit(dir_text, (box.centerx - dir_text.get_width()//2, box.y + 5))
+        for idx, key_name in enumerate(["UP", "DOWN", "LEFT", "RIGHT"]):
+            bx = KEYS_X + idx * (KEY_BOX_W + KEY_GAP)
+            box = pygame.Rect(bx, KEYS_Y, KEY_BOX_W, KEY_BOX_H)
 
-        k_text = key_value_font.render(key_names[key_name], True, BLACK)
-        screen.blit(k_text, (box.centerx - k_text.get_width()//2, box.y + 22))
+            is_active = binding_active == key_name
+            fill = (0, 180, 160) if is_active else WHITE
+            border = CYAN if is_active else (100, 130, 100)
 
-    if key_error_msg:
-        kerr = label_font.render(key_error_msg, True, (200, 30, 30))
-        screen.blit(kerr, (KEYS_X, KEYS_Y + KEY_BOX_H + 5))
+            pygame.draw.rect(screen, fill, box, border_radius=6)
+            pygame.draw.rect(screen, border, box, 2, border_radius=6)
 
-    # ─── Buttons ───
-    mouse = pygame.mouse.get_pos()
+            dir_text = key_label_font.render(key_name, True, (80, 80, 80))
+            screen.blit(dir_text, (box.centerx - dir_text.get_width()//2, box.y + 5))
 
-    # Exit (left)
-    exit_rect = pygame.Rect(EXIT_X, BTN_Y, BTN_W, BTN_H)
-    ehover = exit_rect.collidepoint(mouse)
-    ecolor = (180, 50, 50) if ehover else (140, 40, 40)
-    pygame.draw.rect(screen, ecolor, exit_rect, border_radius=10)
-    pygame.draw.rect(screen, (200, 60, 60), exit_rect, 2, border_radius=10)
-    etxt = button_font.render("EXIT", True, WHITE)
-    screen.blit(etxt, (exit_rect.centerx - etxt.get_width()//2,
-                        exit_rect.centery - etxt.get_height()//2))
+            k_text = key_value_font.render(key_names[key_name], True, BLACK)
+            screen.blit(k_text, (box.centerx - k_text.get_width()//2, box.y + 22))
 
-    # Join (right)
-    join_rect = pygame.Rect(JOIN_X, BTN_Y, BTN_W, BTN_H)
-    jhover = join_rect.collidepoint(mouse) and username.strip()
-    if username.strip():
-        jcolor = (0, 200, 170) if jhover else (0, 160, 140)
-        jborder = (0, 230, 200)
+        if key_error_msg:
+            kerr = label_font.render(key_error_msg, True, (200, 30, 30))
+            screen.blit(kerr, (KEYS_X, KEYS_Y + KEY_BOX_H + 5))
+
+        # ─── Buttons ───
+        mouse = pygame.mouse.get_pos()
+
+        # Exit (left)
+        exit_rect = pygame.Rect(EXIT_X, BTN_Y, BTN_W, BTN_H)
+        ehover = exit_rect.collidepoint(mouse)
+        ecolor = (180, 50, 50) if ehover else (140, 40, 40)
+        pygame.draw.rect(screen, ecolor, exit_rect, border_radius=10)
+        pygame.draw.rect(screen, (200, 60, 60), exit_rect, 2, border_radius=10)
+        etxt = button_font.render("EXIT", True, WHITE)
+        screen.blit(etxt, (exit_rect.centerx - etxt.get_width()//2,
+                            exit_rect.centery - etxt.get_height()//2))
+
+        # Join (right)
+        join_rect = pygame.Rect(JOIN_X, BTN_Y, BTN_W, BTN_H)
+        jhover = join_rect.collidepoint(mouse) and username.strip()
+        if username.strip():
+            jcolor = (0, 200, 170) if jhover else (0, 160, 140)
+            jborder = (0, 230, 200)
+        else:
+            jcolor = (100, 100, 100)
+            jborder = (130, 130, 130)
+        pygame.draw.rect(screen, jcolor, join_rect, border_radius=10)
+        pygame.draw.rect(screen, jborder, join_rect, 2, border_radius=10)
+        jtxt = button_font.render("JOIN", True, WHITE)
+        screen.blit(jtxt, (join_rect.centerx - jtxt.get_width()//2,
+                            join_rect.centery - jtxt.get_height()//2))
+
+        pygame.display.flip()
+        clock.tick(60)
+
+    return result
+if __name__ == "__main__":
+    pygame.init()
+    result = run_login_screen()
+    if result:
+        print(f"Username: {result['username']}")
+        print(f"Color: {result['color']}")
+        print(f"Keys: {result['keys']}")
     else:
-        jcolor = (100, 100, 100)
-        jborder = (130, 130, 130)
-    pygame.draw.rect(screen, jcolor, join_rect, border_radius=10)
-    pygame.draw.rect(screen, jborder, join_rect, 2, border_radius=10)
-    jtxt = button_font.render("JOIN", True, WHITE)
-    screen.blit(jtxt, (join_rect.centerx - jtxt.get_width()//2,
-                        join_rect.centery - jtxt.get_height()//2))
-
-    pygame.display.flip()
-    clock.tick(60)
-
-if result:
-    print(f"Username: {result['username']}")
-    print(f"Color: {result['color']}")
-    print(f"Gradient: {make_gradient(result['color'])}")
-    print(f"Keys: {result['keys']}")
-else:
-    print("Exited without joining")
-
-pygame.quit()
-sys.exit()
+        print("Exited without joining")
+    pygame.quit()
+    sys.exit()
