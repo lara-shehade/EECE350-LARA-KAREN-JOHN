@@ -61,13 +61,13 @@ error_msg = ""
 # keys bindings 
 
 keys_map = {"UP": pygame.K_UP, "DOWN": pygame.K_DOWN, "LEFT": pygame.K_LEFT, "RIGHT": pygame.K_RIGHT}
-key_names = {"UP": "↑", "DOWN": "↓", "LEFT": "←", "RIGHT": "→"}
+key_names = {"UP": "", "DOWN": "", "LEFT": "", "RIGHT": ""}
 binding_active = None
 key_error_msg = ""
 
 # ─── Layout (centered) ───
 CX = WIDTH // 2
-CONTENT_TOP = 160  # below title
+CONTENT_TOP = 140  # below title
 
 # Username
 USER_W = 350
@@ -85,7 +85,7 @@ BAR_Y = USER_Y + USER_H + 50
 PREVIEW_Y = BAR_Y + 35
 
 #buttons
-KEYS_Y = PREVIEW_Y + 40          # vertical position, sits below the snake preview
+KEYS_Y = PREVIEW_Y + 60          # vertical position, sits below the snake preview
 KEY_BOX_W = 65                    # width of each key box
 KEY_BOX_H = 40                    # height of each key box  
 KEY_GAP = 20                      # space between boxes
@@ -96,7 +96,7 @@ KEYS_X = CX - KEYS_TOTAL_W // 2              # starting x, centers the whole row
 BTN_W = 140
 BTN_H = 42
 BTN_GAP = 120
-BTN_Y = HEIGHT - GROUND_HEIGHT - BTN_H +50  #+50 pushes the buttons lower 
+BTN_Y = HEIGHT - GROUND_HEIGHT - BTN_H +70  #+70 pushes the buttons lower 
 EXIT_X = CX - BTN_GAP // 2 - BTN_W
 JOIN_X = CX + BTN_GAP // 2
 
@@ -180,11 +180,21 @@ while running:
                 dragging_color = True
             if user_rect.collidepoint(mx, my):
                 username_active = True
+                binding_active = None
             else:
                 username_active = False
+
+            # Key binding boxes
+            for idx, key_name in enumerate(["UP", "DOWN", "LEFT", "RIGHT"]):
+                bx = KEYS_X + idx * (KEY_BOX_W + KEY_GAP)
+                box = pygame.Rect(bx, KEYS_Y, KEY_BOX_W, KEY_BOX_H)
+                if box.collidepoint(mx, my):
+                    binding_active = key_name
+                    username_active = False
+
             if join_rect.collidepoint(mx, my):
                 if username.strip():
-                    result = {"username": username.strip(), "color": get_color()}
+                    result = {"username": username.strip(), "color": get_color(), "keys": keys_map}
                     running = False
                 else:
                     error_msg = "Please enter a username"
@@ -198,15 +208,28 @@ while running:
             mx = max(BAR_X, min(event.pos[0], BAR_X + BAR_W))
             selected_hue = (mx - BAR_X) / BAR_W
 
-        elif event.type == pygame.KEYDOWN and username_active:
-            error_msg = ""
-            if event.key == pygame.K_BACKSPACE:
-                username = username[:-1]
-            elif event.key == pygame.K_RETURN and username.strip():
-                result = {"username": username.strip(), "color": get_color()}
-                running = False
-            elif len(username) < 15 and event.unicode.isprintable():
-                username += event.unicode
+        elif event.type == pygame.KEYDOWN:
+            if binding_active:
+                duplicate = False
+                for dir_name, existing_key in keys_map.items():
+                    if dir_name != binding_active and existing_key == event.key:
+                        key_error_msg = f"'{pygame.key.name(event.key)}' already used for {dir_name}"
+                        duplicate = True
+                        break
+                if not duplicate:
+                    keys_map[binding_active] = event.key
+                    key_names[binding_active] = pygame.key.name(event.key).upper()
+                    key_error_msg = ""
+                binding_active = None
+            elif username_active:
+                error_msg = ""
+                if event.key == pygame.K_BACKSPACE:
+                    username = username[:-1]
+                elif event.key == pygame.K_RETURN and username.strip():
+                    result = {"username": username.strip(), "color": get_color(), "keys": keys_map}
+                    running = False
+                elif len(username) < 15 and event.unicode.isprintable():
+                    username += event.unicode
 
     # ─── Draw ───
 
@@ -222,11 +245,11 @@ while running:
     # ─── Title ───
     title = title_font.render("Πthon Arena", True, (0, 0, 0)) #black color
     shadow = title_font.render("Πthon Arena", True, (80, 80, 80)) #gray shadow
-    screen.blit(shadow, (CX - title.get_width()//2 + 2, 24))  #lower the 30 and 28 to get the title higher on the screen
-    screen.blit(title, (CX - title.get_width()//2, 22))   
+    screen.blit(shadow, (CX - title.get_width()//2 + 2, 16))  #lower the 30 and 28 to get the title higher on the screen
+    screen.blit(title, (CX - title.get_width()//2, 14))   
 
     subtitle = label_font.render("Design your snake, then join the battle!", True, (40, 80, 40))
-    screen.blit(subtitle, (CX - subtitle.get_width()//2, 96))
+    screen.blit(subtitle, (CX - subtitle.get_width()//2, 90))
 
     # ─── Username ───
     ulabel = label_font.render("Username", True, (40, 60, 40))
@@ -269,6 +292,31 @@ while running:
     preview_x = CX - (6 * 21) // 2
     draw_snake_preview(screen, preview_x, PREVIEW_Y, get_color())
 
+    # ─── Key Bindings ───
+    klabel = label_font.render("Controls, click to change then press the desired key", True, (40, 60, 40))
+    screen.blit(klabel, (KEYS_X, KEYS_Y - 20))
+
+    for idx, key_name in enumerate(["UP", "DOWN", "LEFT", "RIGHT"]):
+        bx = KEYS_X + idx * (KEY_BOX_W + KEY_GAP)
+        box = pygame.Rect(bx, KEYS_Y, KEY_BOX_W, KEY_BOX_H)
+
+        is_active = binding_active == key_name
+        fill = (0, 180, 160) if is_active else WHITE
+        border = CYAN if is_active else (100, 130, 100)
+
+        pygame.draw.rect(screen, fill, box, border_radius=6)
+        pygame.draw.rect(screen, border, box, 2, border_radius=6)
+
+        dir_text = key_label_font.render(key_name, True, (80, 80, 80))
+        screen.blit(dir_text, (box.centerx - dir_text.get_width()//2, box.y + 5))
+
+        k_text = key_value_font.render(key_names[key_name], True, BLACK)
+        screen.blit(k_text, (box.centerx - k_text.get_width()//2, box.y + 22))
+
+    if key_error_msg:
+        kerr = label_font.render(key_error_msg, True, (200, 30, 30))
+        screen.blit(kerr, (KEYS_X, KEYS_Y + KEY_BOX_H + 5))
+
     # ─── Buttons ───
     mouse = pygame.mouse.get_pos()
 
@@ -304,6 +352,7 @@ if result:
     print(f"Username: {result['username']}")
     print(f"Color: {result['color']}")
     print(f"Gradient: {make_gradient(result['color'])}")
+    print(f"Keys: {result['keys']}")
 else:
     print("Exited without joining")
 
