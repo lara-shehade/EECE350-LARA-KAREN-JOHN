@@ -43,7 +43,7 @@ def send(sock, message):
         sock:    the socket to send through
         message: the string to send (e.g. "USERNAME_OK" or "MOVE:UP")
     """
-    sock.send((message + "\n").encode('utf-8'))
+    sock.sendall((message + "\n").encode('utf-8'))
 
 def receive(sock):
     """
@@ -75,23 +75,32 @@ def receive(sock):
 # These are called by the client app when the player does something.
 # =============================================================================
 
-def send_join(username, color):
+def send_join(username, color, head_style="classic", head_emoji=None, chat_port=0):
     """
-    Player wants to join the server with a username and snake color.
-    
+    Player wants to join the server with a username, snake color, head style,
+    and P2P chat port.
+
     Parameters:
-        username: string like "Lara"
-        color:    list like [0, 180, 50] (RGB values)
-    
+        username:   string like "Lara"
+        color:      list like [0, 180, 50] (RGB values)
+        head_style: "classic" or "emoji"
+        head_emoji: string like "^.^" (only used when head_style == "emoji"), or None
+        chat_port:  the port this client is listening on for P2P chat connections.
+                    0 means chat is not available (e.g. spectator who skipped setup).
+
     Returns:
-        Formatted message string like: JOIN:{"username":"Lara","color":[0,180,50]}
+        Formatted message string like:
+        JOIN:{"username":"Lara","color":[0,180,50],"head_style":"emoji",
+              "head_emoji":"^.^","chat_port":49832}
     """
     data = {
-        "username": username,
-        "color": color
+        "username":   username,
+        "color":      color,
+        "head_style": head_style,
+        "head_emoji": head_emoji,
+        "chat_port":  chat_port
     }
     return "JOIN:" + json.dumps(data)
-
 
 def send_move(direction):
     """Player sends their snake's direction. direction = UP, DOWN, LEFT, or RIGHT."""
@@ -143,10 +152,12 @@ def players_list(players):
     Server sends the list of online players.
 
     Parameters:
-        players: list of dicts, e.g. [{"username": "Lara", "color": [0,180,50]}, ...]
-    
+        players: list of dicts, e.g.:
+            [{"username": "Lara", "color": [0,180,50],
+              "head_style": "emoji", "head_emoji": "^.^", "status": "lobby"}, ...]
+
     Returns:
-        Formatted message string like: PLAYERS_LIST:[{"username":"Lara","color":[0,180,50]}]
+        Formatted message string like: PLAYERS_LIST:[{...}]
     """
     return "PLAYERS_LIST:" + json.dumps(players)
 
@@ -177,7 +188,7 @@ def game_state(player1, player2, pies, obstacles, time_left):
     This gets called every time the game updates (many times per second).
 
     Each player dict looks like:
-        {"username": "john", "snake": [(100,200), (100,220), (100,240)], 
+        {"username": "john", "snake": [(col, row), ...],   # grid coordinates e.g. (3, 7)
          "color": [0,180,50], "health": 80}
 
     pies:       list of (x, y, type) for each pie on the board
@@ -186,16 +197,22 @@ def game_state(player1, player2, pies, obstacles, time_left):
     """
     state = {
         "player1": {
-            "username": player1["username"],
-            "snake":    player1["snake"],
-            "color":    player1["color"],
-            "health":   player1["health"]
+            "username":   player1["username"],
+            "snake":      player1["snake"],
+            "color":      player1["color"],
+            "health":     player1["health"],
+            "head_style": player1["head_style"],
+            "head_emoji": player1["head_emoji"],
+            "invincible": player1["invincible"]
         },
         "player2": {
-            "username": player2["username"],
-            "snake":    player2["snake"],
-            "color":    player2["color"],
-            "health":   player2["health"]
+            "username":   player2["username"],
+            "snake":      player2["snake"],
+            "color":      player2["color"],
+            "health":     player2["health"],
+            "head_style": player2["head_style"],
+            "head_emoji": player2["head_emoji"],
+            "invincible": player2["invincible"]
         },
         "pies":      pies,
         "obstacles": obstacles,
@@ -263,7 +280,8 @@ def parse_players_list(body):
 
 
 def parse_join(body):
-    """Converts JOIN JSON body back into a Python dictionary with username and color."""
+    """Converts JOIN JSON body back into a Python dictionary.
+    Returns dict with keys: username, color, head_style, head_emoji."""
     return json.loads(body)
 
 
@@ -271,3 +289,9 @@ def parse_game_over(body):
     """Converts GAME_OVER JSON body back into winner, health1, health2."""
     data = json.loads(body)
     return data["winner"], data["health1"], data["health2"]
+
+def parse_chat(body):
+    """Splits 'username:message' from a CHAT body.
+    Returns (sender_username, message)."""
+    parts = body.split(":", 1)
+    return (parts[0], parts[1]) if len(parts) == 2 else (body, "")
