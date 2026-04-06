@@ -175,8 +175,9 @@ class Player:
         return True
 
     def apply_heal(self, amount):
+        if not self.alive:
+            return
         self.health = _clamp(self.health + amount, 0, HEALTH_MAX)
-
     # ── Movement ──────────────────────────────────────────────────────────────
 
     def move(self):

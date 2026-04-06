@@ -13,7 +13,7 @@ GRID_COLS  = 20   # 800px // 40
 GRID_ROWS  = 15   # 600px // 40
 
 # ── Timing ────────────────────────────────────────────────────────────────────
-SNAKE_MOVE_INTERVAL_MS = 200   # server ticks + client animates at this rate
+SNAKE_MOVE_INTERVAL_MS = 250   # server ticks + client animates at this rate
 
 # ── Invincibility ─────────────────────────────────────────────────────────────
 # Server grants this after any damage hit.

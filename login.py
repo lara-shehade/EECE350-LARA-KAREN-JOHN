@@ -511,7 +511,7 @@ def run_login_screen(initial_error=""):
                             "head_emoji": emoji_text if head_style == "emoji" else None,
                         }
                         running = False
-                    elif len(username) < 15 and event.unicode.isprintable():
+                    elif len(username) < 20 and event.unicode.isprintable():
                         username += event.unicode
 
         draw_background()

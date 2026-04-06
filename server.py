@@ -50,6 +50,10 @@ pending_challenges = {}
 #   }
 active_game = None
 
+# Rematch tracking
+pending_rematches = set()   # usernames who requested a rematch
+last_game_pair    = {}      # {username: opponent} — set when each game ends
+
 
 # =============================================================================
 # BROADCAST HELPERS
@@ -179,6 +183,9 @@ def game_loop():
         # 6b. Clean up under lock
         with players_lock:
             if active_game is not None:
+                # Record who played each other — enables rematch
+                last_game_pair[p1_name] = p2_name
+                last_game_pair[p2_name] = p1_name
                 # Return both players to lobby
                 for uname in [p1_name, p2_name]:
                     if uname in connected_players:
@@ -364,11 +371,17 @@ def handle_watch(username):
         p2 = active_game["player2"]
         print(f"[SPECTATOR] {username} watching {p1} vs {p2}")
 
-    # Notify players a fan joined (outside the lock)
+    # Notify players + other spectators that a fan joined (outside the lock)
     fan_msg = protocol.fan_joined(username)
+    with players_lock:
+        recipients = [(p1, connected_players[p1]["socket"]),
+                      (p2, connected_players[p2]["socket"])]
+        for spec in active_game.get("spectators", []):
+            if spec != username and spec in connected_players:
+                recipients.append((spec, connected_players[spec]["socket"]))
     try:
-        protocol.send(connected_players[p1]["socket"], fan_msg)
-        protocol.send(connected_players[p2]["socket"], fan_msg)
+        for uname, sock in recipients:
+            protocol.send(sock, fan_msg)
     except Exception as e:
         print(f"[ERROR] fan joined notify: {e}")
 
@@ -408,6 +421,9 @@ def remove_player(username):
         to_remove = [k for k, v in pending_challenges.items() if v == username]
         for key in to_remove:
             del pending_challenges[key]
+
+        # ── Pending rematch ───────────────────────────────────────────────────
+        pending_rematches.discard(username)
 
         # ── Was in a game ─────────────────────────────────────────────────────
         if player_status == "in_game" and active_game:
@@ -452,6 +468,114 @@ def remove_player(username):
         _send_to_all(game_over_recipients, game_over_msg)
 
     broadcast_player_list()
+
+
+# =============================================================================
+# REMATCH SYSTEM
+# =============================================================================
+
+def handle_rematch(username):
+    """
+    Player wants to rematch their last opponent.
+
+    Flow:
+      First  player: added to pending_rematches →
+                     REMATCH_QUEUED sent to them (confirms server got it) +
+                     REMATCH_FROM sent to opponent (notifies them)
+      Second player: both in pending → game starts immediately →
+                     REMATCH_START sent to both
+    """
+    global active_game
+
+    with players_lock:
+        opponent = last_game_pair.get(username)
+        if not opponent or opponent not in connected_players:
+            return
+        if active_game is not None:
+            return
+        # Don't allow double-request from same player
+        if username in pending_rematches:
+            return
+
+        if opponent in pending_rematches:
+            # Both want rematch — start the game
+            pending_rematches.discard(opponent)
+
+            connected_players[username]["status"] = "in_game"
+            connected_players[opponent]["status"]  = "in_game"
+
+            active_game = {
+                "player1":    username,
+                "player2":    opponent,
+                "spectators": [],
+                "game":       GameState(
+                                  username, connected_players[username],
+                                  opponent,  connected_players[opponent],
+                              ),
+            }
+            print(f"[REMATCH] {username} vs {opponent}")
+            start_now = True
+            opp_sock  = connected_players[opponent]["socket"]
+            my_sock   = connected_players[username]["socket"]
+        else:
+            # Record and notify both sides
+            pending_rematches.add(username)
+            start_now  = False
+            my_sock    = connected_players[username]["socket"]
+            opp_sock   = connected_players[opponent]["socket"]
+
+    if start_now:
+        try:
+            protocol.send(my_sock,  protocol.rematch_start())
+            protocol.send(opp_sock, protocol.rematch_start())
+        except Exception as e:
+            print(f"[ERROR] rematch start notify: {e}")
+        broadcast_player_list()
+        threading.Thread(target=game_loop, daemon=True).start()
+    else:
+        try:
+            # Confirm to requester that server recorded their request
+            protocol.send(my_sock,  protocol.rematch_queued(opponent))
+            # Notify opponent
+            protocol.send(opp_sock, protocol.rematch_from(username))
+        except Exception as e:
+            print(f"[ERROR] rematch notify: {e}")
+
+
+def handle_decline_rematch(username):
+    """
+    Player is leaving — cancel any rematch involvement and notify opponent.
+
+    Handles two cases:
+      1. This player had sent a REMATCH request (they are in pending_rematches)
+      2. The opponent had sent a REMATCH request to this player — opponent is
+         waiting, but this player is leaving without responding
+    """
+    notify_opponent = None
+
+    with players_lock:
+        opponent = last_game_pair.get(username)
+
+        # Case 1 — this player had requested a rematch
+        if username in pending_rematches:
+            pending_rematches.discard(username)
+            if opponent and opponent in connected_players:
+                notify_opponent = (opponent,
+                                   connected_players[opponent]["socket"])
+
+        # Case 2 — opponent requested a rematch and is waiting for this player
+        elif opponent and opponent in pending_rematches:
+            pending_rematches.discard(opponent)
+            if opponent in connected_players:
+                notify_opponent = (opponent,
+                                   connected_players[opponent]["socket"])
+
+    if notify_opponent:
+        opp_name, opp_sock = notify_opponent
+        try:
+            protocol.send(opp_sock, protocol.rematch_declined(username))
+        except Exception as e:
+            print(f"[ERROR] rematch decline notify to {opp_name}: {e}")
 
 
 # =============================================================================
@@ -538,6 +662,12 @@ def handle_client(client_socket, client_address):
 
             elif header == "WATCH":
                 handle_watch(username)
+
+            elif header == "REMATCH":
+                handle_rematch(username)
+
+            elif header == "DECLINE_REMATCH":
+                handle_decline_rematch(username)
 
             elif header == "MOVE":
                 # Only in-game players can move — spectators blocked explicitly

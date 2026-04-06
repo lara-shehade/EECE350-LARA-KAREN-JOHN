@@ -1,10 +1,13 @@
 import pygame
 import socket
 import sys
+import queue
+import threading
 import protocol
 from login import run_login_screen
 from chat import P2PChat
 from lobby import run_lobby_screen
+from game_screen import run_game_screen, load_assets
 
 # =============================================================================
 
@@ -46,6 +49,9 @@ def main():
 
     # ── Init pygame ───────────────────────────────────────────────────────────
     pygame.init()
+
+    # Load game assets once — shared across all matches
+    assets = load_assets()
 
     # ── Login loop ────────────────────────────────────────────────────────────
     # We loop here so that if the server rejects the username,
@@ -119,11 +125,45 @@ def main():
         if header == "USERNAME_OK":
             print(f"[CLIENT] Joined as '{result['username']}'")
             print(f"[CLIENT] Connected to {SERVER_HOST}:{SERVER_PORT}")
-            lobby_result = run_lobby_screen(sock, result, chat)
-            if lobby_result == "game":
-                pass   # TODO: Step 3 — game screen
-            elif lobby_result == "watch":
-                pass   # TODO: Step 5 — spectator screen
+
+            # ── Single shared receiver thread — started once, never restarted ──
+            # One thread reads all server messages into one queue.
+            # Both lobby and game screen drain the same queue so no message
+            # is ever consumed by the wrong screen.
+            msg_q = queue.Queue()
+
+            def _rx_thread():
+                while True:
+                    try:
+                        raw = protocol.receive(sock)
+                        if not raw:
+                            msg_q.put(("DISCONNECT", None)); break
+                        h, b = protocol.parse(raw)
+                        msg_q.put((h, b))
+                    except Exception:
+                        msg_q.put(("DISCONNECT", None)); break
+
+            threading.Thread(target=_rx_thread, daemon=True,
+                             name="client-rx").start()
+
+            # ── Inner loop — lobby ↔ game until quit ──────────────────────────
+            while True:
+                lobby_result = run_lobby_screen(sock, result, chat, msg_q)
+                if lobby_result == "game":
+                    game_result = run_game_screen(sock, result,
+                                                  mode="player",
+                                                  assets=assets,
+                                                  msg_q=msg_q)
+                elif lobby_result == "watch":
+                    game_result = run_game_screen(sock, result,
+                                                  mode="spectator",
+                                                  assets=assets,
+                                                  msg_q=msg_q)
+                else:
+                    break   # lobby returned "quit"
+                if game_result == "quit":
+                    break   # window closed during game
+                # game_result == "lobby" → loop back to lobby screen
             break
 
         # Unexpected response

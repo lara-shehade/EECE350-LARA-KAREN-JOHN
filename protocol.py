@@ -221,15 +221,17 @@ def game_state(player1, player2, pies, obstacles, time_left):
     return "GAME_STATE:" + json.dumps(state)
 
 
-def game_over(winner, health1, health2):
+def game_over(winner, health1, health2, reason="normal"):
     """
     Server tells both players the game ended.
     winner is a username string, or "TIE" if it's a draw.
+    reason: "normal" | "disconnect"
     """
     data = {
-        "winner": winner,
+        "winner":  winner,
         "health1": health1,
-        "health2": health2
+        "health2": health2,
+        "reason":  reason,
     }
     return "GAME_OVER:" + json.dumps(data)
 
@@ -247,6 +249,38 @@ def fan_joined(username):
 def player_disconnected(username):
     """Server tells everyone: 'this player just disconnected'."""
     return f"DISCONNECTED:{username}"
+
+
+# ── Rematch ───────────────────────────────────────────────────────────────────
+
+def send_rematch():
+    """Client tells the server: 'I want a rematch against my last opponent'."""
+    return "REMATCH"
+
+
+def send_decline_rematch():
+    """Client tells the server: 'I am leaving — cancel any pending rematch'."""
+    return "DECLINE_REMATCH"
+
+
+def rematch_from(username):
+    """Server tells a player: 'your last opponent wants a rematch'."""
+    return f"REMATCH_FROM:{username}"
+
+
+def rematch_queued(opponent):
+    """Server tells the requester: 'your rematch request was recorded, waiting for opponent'."""
+    return f"REMATCH_QUEUED:{opponent}"
+
+
+def rematch_start():
+    """Server tells both players: 'rematch accepted, new game starting'."""
+    return "REMATCH_START"
+
+
+def rematch_declined(username):
+    """Server tells a player: 'your opponent declined the rematch'."""
+    return f"REMATCH_DECLINED:{username}"
 
 
 # =============================================================================
@@ -286,9 +320,9 @@ def parse_join(body):
 
 
 def parse_game_over(body):
-    """Converts GAME_OVER JSON body back into winner, health1, health2."""
+    """Converts GAME_OVER JSON body back into winner, health1, health2, reason."""
     data = json.loads(body)
-    return data["winner"], data["health1"], data["health2"]
+    return data["winner"], data["health1"], data["health2"], data.get("reason", "normal")
 
 def parse_chat(body):
     """Splits 'username:message' from a CHAT body.

@@ -48,7 +48,9 @@ LEFT_W      = 700       # player list
 RIGHT_W     = W - LEFT_W  # 400 — chat
 FPS         = 60
 
-LIST_TOP    = HEADER_H + 52   # extra room for ONLINE PLAYERS + count line
+SEARCH_Y    = HEADER_H + 6
+SEARCH_H    = 28
+LIST_TOP    = SEARCH_Y + SEARCH_H + 4   # = HEADER_H + 38  — less than original 52
 ROW_H       = 74
 ROW_PAD     = 8
 AVA_R       = 24
@@ -174,7 +176,7 @@ def _draw_avatar(surf, cx, cy, r, color, style, emoji, f_em):
 # MAIN
 # =============================================================================
 
-def run_lobby_screen(sock, player_info, chat):
+def run_lobby_screen(sock, player_info, chat, msg_q):
     """Returns: 'game' | 'watch' | 'quit'"""
 
     pygame.display.set_mode((W, H))
@@ -194,11 +196,19 @@ def run_lobby_screen(sock, player_info, chat):
     f_chat  = pygame.font.SysFont("tahoma", 13)
     f_chd   = pygame.font.SysFont("tahoma", 13, bold=True)
     f_inp   = pygame.font.SysFont("tahoma", 13)
-    f_match = pygame.font.SysFont("tahoma", 12)
+    f_match = pygame.font.SysFont("segoeuiemoji,segoe ui emoji,tahoma", 12)
 
     # ── Assets ────────────────────────────────────────────────────────────────
     try:    clouds = _load_clouds()
     except: clouds = []
+
+    # Search icon
+    _search_icon = None
+    try:
+        _si = pygame.image.load(os.path.join("assets", "search.png")).convert_alpha()
+        _search_icon = pygame.transform.smoothscale(_si, (20, 20))
+    except Exception:
+        pass
 
     ICON_SZ = 20
     try:
@@ -227,6 +237,12 @@ def run_lobby_screen(sock, player_info, chat):
     result         = "quit"
     unread         = {}   # {username: count} — unread private messages per sender
 
+    # Search + filter state
+    search_text      = ""
+    search_active    = False
+    filter_mode      = "username"   # "username" | "status"
+    filter_dropdown  = False        # dropdown open
+
     my_name  = player_info["username"]
     my_color = tuple(int(c) for c in player_info.get("color", TEAL))
     my_style = player_info.get("head_style", "classic")
@@ -235,8 +251,7 @@ def run_lobby_screen(sock, player_info, chat):
     # Store chat button rects — updated every draw frame, used in event handler
     _chat_rects = [None, None, None, None]   # pub, priv, inp, snd
 
-    msg_q = queue.Queue()
-    _start_receiver(sock, msg_q)
+    # msg_q is the shared queue from client.py — single receiver thread for all screens
 
     # ── Small helpers ─────────────────────────────────────────────────────────
     def _sc(s):
@@ -257,9 +272,132 @@ def run_lobby_screen(sock, player_info, chat):
         s = int(time.time() - match_start_ts)
         return f"{s//60:02d}:{s%60:02d}"
 
+    def _visible_players():
+        base = [p for p in players if p["username"] != my_name]
+        if not search_text:
+            return base
+        q = search_text.lower().strip()
+        if filter_mode == "username":
+            return [p for p in base if q in p["username"].lower()]
+        # Status mode — map partial input to status keys
+        status_map = {
+            "lobby":       ["waiting", "wait"],
+            "in_game":     ["in match", "match", "in"],
+            "spectating":  ["watching", "watch"],
+        }
+        # Which statuses does this query plausibly match?
+        matching = {s for s, kws in status_map.items()
+                    if any(kw.startswith(q) for kw in kws)}
+        # If nothing matches at all → immediate no results
+        return [p for p in base if p.get("status") in matching]
+
     # =========================================================================
     # DRAW FUNCTIONS
     # =========================================================================
+
+    # ── Search bar with mode selector ─────────────────────────────────────────
+    def draw_search_bar():
+        ICON_D  = SEARCH_H
+        GAP     = 6
+        BAR_X   = 10
+        BAR_W   = LEFT_W - 20 - ICON_D - GAP
+        PILL_W  = 110
+        PILL_M  = 6
+
+        bar_r  = pygame.Rect(BAR_X, SEARCH_Y, BAR_W, SEARCH_H)
+        icon_r = pygame.Rect(BAR_X + BAR_W + GAP, SEARCH_Y, ICON_D, ICON_D)
+
+        # Input bar
+        bar_col = (234, 246, 250) if not search_active else WHITE
+        bc      = TEAL if search_active else (198, 225, 232)
+        _rrect(screen, bar_col, bar_r, r=SEARCH_H//2, bw=1, bc=bc)
+
+        # Divider
+        div_x = bar_r.right - PILL_W - PILL_M - 10
+        pygame.draw.line(screen, (198, 225, 232),
+                         (div_x, bar_r.y + 5), (div_x, bar_r.bottom - 5), 1)
+
+        # Mode pill
+        pill_r = pygame.Rect(bar_r.right - PILL_W - PILL_M,
+                             bar_r.y + (SEARCH_H - 22) // 2,
+                             PILL_W, 22)
+        _rrect(screen, WHITE, pill_r, r=11, bw=1, bc=(198, 225, 232))
+
+        mode_label = "By Username" if filter_mode == "username" else "By Status"
+        pt = f_stat.render(mode_label, True, TEXT_DARK)
+        tx = pill_r.x + 8
+        screen.blit(pt, (tx, pill_r.centery - pt.get_height()//2))
+
+        # Drawn triangle arrow (avoids font rendering issues)
+        ax = pill_r.right - 12
+        ay = pill_r.centery
+        if filter_dropdown:
+            # Up triangle
+            pts = [(ax, ay + 3), (ax - 4, ay - 2), (ax + 4, ay - 2)]
+        else:
+            # Down triangle
+            pts = [(ax, ay - 3), (ax - 4, ay + 2), (ax + 4, ay + 2)]
+        pygame.draw.polygon(screen, TEXT_MID, pts)
+
+        # Placeholder / typed text
+        if search_text:
+            tl = f_stat.render(search_text[:40], True, TEXT_DARK)
+            screen.blit(tl, (bar_r.x + 16, bar_r.centery - tl.get_height()//2))
+            if search_active and pygame.time.get_ticks() % 1000 < 500:
+                cx = bar_r.x + 16 + f_stat.size(search_text[:40])[0] + 1
+                pygame.draw.line(screen, TEXT_DARK,
+                                 (cx, bar_r.y + 5), (cx, bar_r.bottom - 5), 1)
+        else:
+            ph = ("Search for username..." if filter_mode == "username"
+                  else "Waiting  /  In Match  /  Watching")
+            pl = f_stat.render(ph, True, TEXT_LIGHT)
+            screen.blit(pl, (bar_r.x + 16, bar_r.centery - pl.get_height()//2))
+
+        # Circular icon — medium blue matching reference
+        ICON_COL     = (100, 160, 220)
+        ICON_COL_HOV = (120, 180, 235)
+        hover_icon = icon_r.collidepoint(pygame.mouse.get_pos())
+        pygame.draw.circle(screen, ICON_COL_HOV if hover_icon else ICON_COL,
+                           icon_r.center, ICON_D // 2)
+        if _search_icon:
+            screen.blit(_search_icon, _search_icon.get_rect(center=icon_r.center))
+        else:
+            lb = f_stat.render("S", True, WHITE)
+            screen.blit(lb, (icon_r.centerx - lb.get_width()//2,
+                              icon_r.centery - lb.get_height()//2))
+
+        # Dropdown — connected directly to bar (no gap), top corners flush
+        opt1_r = opt2_r = None
+        if filter_dropdown:
+            DW, OPT_H = pill_r.width + 12, 26
+            DX = pill_r.x - 6
+            DY = bar_r.bottom          # flush connection — no gap
+
+            sh = pygame.Surface((DW + 6, OPT_H * 2 + 6), pygame.SRCALPHA)
+            pygame.draw.rect(sh, (0, 0, 0, 35),
+                             (3, 3, DW, OPT_H * 2), border_radius=8)
+            screen.blit(sh, (DX - 1, DY - 1))
+
+            _rrect(screen, WHITE,
+                   pygame.Rect(DX, DY, DW, OPT_H * 2), r=8,
+                   bw=1, bc=CARD_BORDER)
+
+            for i, (key, label2) in enumerate([("username", "By Username"),
+                                                ("status",   "By Status")]):
+                opt_r = pygame.Rect(DX + 1, DY + i * OPT_H, DW - 2, OPT_H)
+                if i == 0:
+                    opt1_r = opt_r
+                else:
+                    opt2_r = opt_r
+                sel     = filter_mode == key
+                hover_o = opt_r.collidepoint(pygame.mouse.get_pos())
+                bg = TEAL if sel else (CARD_HOV if hover_o else WHITE)
+                pygame.draw.rect(screen, bg, opt_r,
+                                 border_radius=7 if (i == 0 or i == 1) else 0)
+                lt = f_stat.render(label2, True, WHITE if sel else TEXT_DARK)
+                screen.blit(lt, (opt_r.x + 10, opt_r.centery - lt.get_height()//2))
+
+        return bar_r, pill_r, icon_r, opt1_r, opt2_r
 
     # ── Header ────────────────────────────────────────────────────────────────
     def draw_header():
@@ -269,7 +407,16 @@ def run_lobby_screen(sock, player_info, chat):
         pygame.draw.line(screen, (162, 216, 206),
                          (0, HEADER_H), (W, HEADER_H), 2)
 
-        # Title — centered, bigger, teal
+        # "ONLINE PLAYERS" + count on the left of header
+        ol = f_sec_big.render("ONLINE PLAYERS", True, TEXT_DARK)
+        screen.blit(ol, (14, 10))
+        wc2 = sum(1 for p in players
+                  if p.get("status") == "lobby" and p["username"] != my_name)
+        cl = f_count.render(
+            f"{len(players)} online  ·  {wc2} waiting", True, TEXT_MID)
+        screen.blit(cl, (14, 10 + ol.get_height() + 2))
+
+        # Title centered in the left panel
         f_title_big = pygame.font.SysFont("comicsansms", 38, bold=True)
         sh = f_title_big.render("Πthon Arena", True, TEAL_DARK)
         ts = f_title_big.render("Πthon Arena", True, (30, 120, 200))
@@ -589,6 +736,8 @@ def run_lobby_screen(sock, player_info, chat):
     # =========================================================================
 
     running = True
+    # Pre-initialize rects — populated each draw frame, used in event handler
+    _bar_r = _pill_r = _icon_r = _opt1_r = _opt2_r = None
     while running:
         clock.tick(FPS)
         mouse = pygame.mouse.get_pos()
@@ -656,16 +805,38 @@ def run_lobby_screen(sock, player_info, chat):
                         challenge_from = None
                     continue
 
-                # Chat panel — use pre-computed rects from last draw frame
-                pub_r2, priv_r2, inp_r2, snd_r2 = _chat_rects
+                # Dropdown options
+                if filter_dropdown and _opt1_r and _opt1_r.collidepoint(mx, my2):
+                    filter_mode = "username"; filter_dropdown = False
+                    search_text = ""; continue
+                if filter_dropdown and _opt2_r and _opt2_r.collidepoint(mx, my2):
+                    filter_mode = "status"; filter_dropdown = False
+                    search_text = ""; continue
+                if filter_dropdown:
+                    filter_dropdown = False
 
+                # Mode pill — toggle dropdown
+                if _pill_r and _pill_r.collidepoint(mx, my2):
+                    filter_dropdown = not filter_dropdown
+                    search_active   = False; continue
+
+                # Input bar or icon btn — activate search typing
+                if ((_bar_r and _bar_r.collidepoint(mx, my2)) or
+                        (_icon_r and _icon_r.collidepoint(mx, my2))):
+                    search_active   = True
+                    filter_dropdown = False
+                    input_active    = False; continue
+
+                # Chat panel
+                pub_r2, priv_r2, inp_r2, snd_r2 = _chat_rects
                 if None not in (pub_r2, priv_r2, inp_r2, snd_r2) and mx >= LEFT_W:
                     if pub_r2.collidepoint(mx, my2):
                         chat_mode = "public"; chat_target = None
                     elif priv_r2.collidepoint(mx, my2):
                         chat_mode = "private"
                     elif inp_r2.collidepoint(mx, my2):
-                        input_active = True
+                        input_active  = True
+                        search_active = False
                     elif snd_r2.collidepoint(mx, my2) and input_text.strip():
                         m = input_text.strip()
                         if chat_mode == "public":
@@ -682,13 +853,13 @@ def run_lobby_screen(sock, player_info, chat):
                         input_text = ""
 
                 if mx < LEFT_W:
+                    if not (_bar_r and _bar_r.collidepoint(mx, my2)):
+                        search_active = False
                     input_active = False
-                    # Player row clicks
+                    # Player row clicks — use filtered list
                     ry = LIST_TOP - scroll_off
-                    for p in players:
-                        un = p["username"]
-                        if un == my_name:
-                            ry += ROW_H; continue
+                    for p in _visible_players():
+                        un  = p["username"]
                         cr2 = pygame.Rect(10, ry, LEFT_W - 20, ROW_H - ROW_PAD)
                         if cr2.collidepoint(mx, my2):
                             st  = p.get("status", "lobby")
@@ -699,8 +870,7 @@ def run_lobby_screen(sock, player_info, chat):
                             c3  = pygame.Rect(bx - 38, by, 30, BH)
                             if b3.collidepoint(mx, my2):
                                 if st == "lobby":
-                                    protocol.send(sock,
-                                        protocol.send_challenge(un))
+                                    protocol.send(sock, protocol.send_challenge(un))
                                 elif st == "in_game":
                                     protocol.send(sock, "WATCH")
                                     result = "watch"; running = False
@@ -712,11 +882,20 @@ def run_lobby_screen(sock, player_info, chat):
                                     chat_target  = un
                                     chat_mode    = "private"
                                     input_active = True
-                                    unread[un]   = 0   # clear badge
+                                    search_active = False
+                                    unread[un]   = 0
                         ry += ROW_H
 
             elif event.type == pygame.KEYDOWN:
-                if input_active:
+                if search_active:
+                    if event.key == pygame.K_ESCAPE:
+                        search_active = False
+                        search_text   = ""
+                    elif event.key == pygame.K_BACKSPACE:
+                        search_text = search_text[:-1]
+                    elif event.unicode.isprintable():
+                        search_text += event.unicode
+                elif input_active:
                     if event.key == pygame.K_RETURN and input_text.strip():
                         m = input_text.strip()
                         if chat_mode == "public":
@@ -744,23 +923,14 @@ def run_lobby_screen(sock, player_info, chat):
 
         draw_header()
 
-        # Section: bigger ONLINE PLAYERS + count line below
-        screen.blit(f_sec_big.render("ONLINE PLAYERS", True, TEXT_DARK),
-                    (14, HEADER_H + 8))
-        wc2 = sum(1 for p in players
-                  if p.get("status") == "lobby" and p["username"] != my_name)
-        screen.blit(f_count.render(
-            f"{len(players)} online  ·  {wc2} waiting", True, TEXT_MID),
-            (14, HEADER_H + 30))
+        vis = _visible_players()
 
-        # Player list clipped
+        # Player list
         screen.set_clip(
             pygame.Rect(0, LIST_TOP, LEFT_W, MATCH_Y - LIST_TOP))
 
         ry = LIST_TOP - scroll_off
-        for p in players:
-            if p["username"] == my_name:
-                ry += ROW_H; continue
+        for p in vis:
             if LIST_TOP - ROW_H < ry < MATCH_Y + ROW_H:
                 hov = pygame.Rect(10, ry, LEFT_W - 20,
                                   ROW_H - ROW_PAD).collidepoint(mouse)
@@ -770,8 +940,7 @@ def run_lobby_screen(sock, player_info, chat):
         screen.set_clip(None)
 
         # Scrollbar
-        total_r  = sum(1 for p in players if p["username"] != my_name)
-        total_px = total_r * ROW_H
+        total_px = len(vis) * ROW_H
         vis_h    = MATCH_Y - LIST_TOP
         if total_px > vis_h:
             sb_h = max(24, int(vis_h * vis_h / total_px))
@@ -785,6 +954,9 @@ def run_lobby_screen(sock, player_info, chat):
         draw_chat()
         if challenge_from:
             draw_popup()
+
+        # Search bar + mode dropdown drawn LAST — floats over player cards
+        _bar_r, _pill_r, _icon_r, _opt1_r, _opt2_r = draw_search_bar()
 
         pygame.display.flip()
 
