@@ -20,6 +20,15 @@ SNAKE_MOVE_INTERVAL_MS = 250   # server ticks + client animates at this rate
 # Client uses it to flash the snake visually.
 INVINCIBILITY_MS = 1500
 
+# ── Sudden Death ──────────────────────────────────────────────────────────────
+# Triggered when this many seconds remain on the clock.
+SUDDEN_DEATH_THRESHOLD_S = 30
+# Server ticks this many times faster during sudden death (2 = double speed).
+SUDDEN_DEATH_SPEED_MULT  = 1.7
+# Damage dealt each time a snake steps on a fire tile.
+# Intentionally higher than any regular obstacle (max obstacle = 25).
+FIRE_DAMAGE              = 30
+
 # ── Directions ────────────────────────────────────────────────────────────────
 UP    = ( 0, -1)
 DOWN  = ( 0,  1)

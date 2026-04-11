@@ -29,6 +29,7 @@
 # Used by draw_snake() to lerp every segment between consecutive states.
 # =============================================================================
 
+import math
 import os
 import queue
 import random
@@ -38,7 +39,7 @@ import pygame
 import pygame.gfxdraw
 
 import protocol
-from constants import TILE_SIZE, GRID_COLS, GRID_ROWS, SNAKE_MOVE_INTERVAL_MS
+from constants import TILE_SIZE, GRID_COLS, GRID_ROWS, SNAKE_MOVE_INTERVAL_MS, SUDDEN_DEATH_SPEED_MULT
 
 # =============================================================================
 # THEME  — identical to lobby.py / login.py
@@ -250,6 +251,23 @@ def load_assets():
 
     a["cheerful"] = _load_img(os.path.join("assets", "cheerful.png"))
 
+    # ── Fire tile (sudden death) ──────────────────────────────────────────────
+    # Ground texture — rendered flush, replaces grass entirely.
+    fire_img = _load_img(os.path.join("assets", "fireground.png"), keep_alpha=False)
+    if fire_img:
+        a["fire"] = pygame.transform.scale(fire_img, (TILE_SIZE, TILE_SIZE))
+    else:
+        s = pygame.Surface((TILE_SIZE, TILE_SIZE))
+        s.fill((220, 60, 0))
+        a["fire"] = s
+
+    # Fireball decoration — centered on top of the ground, like an obstacle sprite.
+    # 34 px fits nicely on the 40 px tile leaving a visible fire border around it.
+    # Loaded at the MAX size the pulse will ever reach.
+    # draw_fire_tiles() smoothscales it down each frame so we never upscale.
+    fireball_img = _load_img(os.path.join("assets", "fireball.png"), max_px=52)
+    a["fireball"] = fireball_img   # may be None — draw_fire_tiles handles gracefully
+
     return a
 
 
@@ -360,6 +378,24 @@ def _draw_classic_eyes(surface, center, direction):
         pygame.draw.circle(surface, BLACK, (int(ex+dx*2), int(ey+dy*2)), 3)
 
 
+def _draw_robot_eyes(surface, center, direction):
+    """
+    Robot eyes — identical geometry to classic eyes, just recoloured:
+      outer circle : light blue  (180, 220, 255)  instead of white
+      inner pupil  : white       (255, 255, 255)  instead of black
+    """
+    cx, cy   = center
+    dx, dy   = direction
+    off, fwd = 8, 6
+    eyes = ([(cx+dx*fwd, cy-off), (cx+dx*fwd, cy+off)] if dx != 0
+            else [(cx-off, cy+dy*fwd), (cx+off, cy+dy*fwd)])
+    LIGHT_BLUE = (180, 220, 255)
+    for ex, ey in eyes:
+        ex, ey = int(ex), int(ey)
+        pygame.draw.circle(surface, LIGHT_BLUE, (ex, ey), 5)
+        pygame.draw.circle(surface, WHITE, (int(ex+dx*2), int(ey+dy*2)), 3)
+
+
 def _draw_emoji_head(surface, center, emoji, fonts):
     # bug 8 fix — uses pre-loaded font, no SysFont call per frame
     lbl = fonts["emoji"].render(emoji, True, WHITE)
@@ -424,6 +460,82 @@ def draw_obstacles(surface, assets, obstacles):
         surface.blit(img, img.get_rect(center=(cx, cy)))
 
 
+# =============================================================================
+# SUDDEN DEATH RENDERING
+# =============================================================================
+
+def draw_fire_tiles(surface, assets, fire_tiles):
+    """
+    Render fire ground + animated fireball decoration on every fire tile.
+    Layer order:
+      1. fireground.png — flush tile replacing the grass underneath
+      2. fireball.png   — centered on top, smoothly pulsing size via sine wave
+
+    Animation:
+      A sine wave driven by pygame.time.get_ticks() moves the size between
+      FIREBALL_MIN_PX and FIREBALL_MAX_PX. math.sin gives a perfectly smooth
+      [-1, 1] oscillation; we remap it to [0, 1] and lerp between the two sizes.
+      Each tile gets its own phase offset based on its position so they don't
+      all pulse in lockstep — gives a natural, lively look.
+    """
+    FIREBALL_MIN_PX = 38   # smallest the fireball shrinks to
+    FIREBALL_MAX_PX = 52   # largest it grows to
+    PULSE_SPEED     = 2.2  # oscillations per second — tweak for faster/slower pulse
+
+    fire_img = assets.get("fire")
+    fireball  = assets.get("fireball")
+    if not fire_img or not fire_tiles:
+        return
+
+    now_s = pygame.time.get_ticks() / 1000.0   # current time in seconds
+
+    # Pre-fetch original fireball size once (used for aspect-ratio scaling)
+    if fireball:
+        fb_w, fb_h = fireball.get_size()
+
+    for col, row in fire_tiles:
+        # ── Ground layer ──────────────────────────────────────────────────────
+        surface.blit(fire_img, (BOARD_X + col * TILE_SIZE, BOARD_Y + row * TILE_SIZE))
+
+        # ── Animated fireball ─────────────────────────────────────────────────
+        if fireball:
+            # Each tile gets a unique phase so they pulse independently.
+            # (col * 3 + row * 7) is a cheap hash — prime multipliers spread phases well.
+            phase = (col * 3 + row * 7) * 0.4
+            # sin oscillates -1..1 → remap to 0..1
+            t     = (math.sin(now_s * PULSE_SPEED * math.tau + phase) + 1.0) / 2.0
+            size  = int(FIREBALL_MIN_PX + (FIREBALL_MAX_PX - FIREBALL_MIN_PX) * t)
+
+            # Scale preserving aspect ratio (smoothscale for anti-aliased result)
+            scale  = size / max(fb_w, fb_h)
+            scaled = pygame.transform.smoothscale(
+                fireball,
+                (max(1, int(fb_w * scale)), max(1, int(fb_h * scale)))
+            )
+
+            cx, cy = _tile_center(col, row)
+            surface.blit(scaled, scaled.get_rect(center=(cx, cy)))
+
+
+def draw_sudden_death_banner(surface, fonts):
+    """
+    Semi-transparent red banner across the top of the board announcing
+    SUDDEN DEATH.  Pulses between two reds to draw attention.
+    """
+    pulse      = (pygame.time.get_ticks() // 400) % 2 == 0
+    banner_col = (200, 30, 30, 180) if pulse else (160, 10, 10, 180)
+
+    banner = pygame.Surface((BOARD_W, 32), pygame.SRCALPHA)
+    banner.fill(banner_col)
+    surface.blit(banner, (BOARD_X, BOARD_Y))
+
+    label = fonts["small_bold"].render("⚡ SUDDEN DEATH — FIRE TILES ACTIVE ⚡",
+                                       True, (255, 230, 100))
+    lx = BOARD_X + BOARD_W // 2 - label.get_width() // 2
+    ly = BOARD_Y + 16 - label.get_height() // 2
+    surface.blit(label, (lx, ly))
+
+
 def draw_pies(surface, assets, pies):
     """pies: list of (col, row, kind) — updated every GAME_STATE."""
     for col, row, kind in pies:
@@ -468,7 +580,9 @@ def draw_snake(surface, snake, prev_snake, move_progress,
         cx, cy    = int(centers[i][0]), int(centers[i][1])
         _draw_fluffy_segment(surface, cx, cy, seg_color)
         if i == 0:
-            if head_style == "emoji" and head_emoji:
+            if head_style == "robot":
+                _draw_robot_eyes(surface, centers[0], direction)
+            elif head_style == "emoji" and head_emoji:
                 _draw_emoji_head(surface, centers[0], head_emoji, fonts)
             else:
                 _draw_classic_eyes(surface, centers[0], direction)
@@ -511,10 +625,12 @@ def _draw_empty_cheers_state(surface, panel_rect, fonts, assets):
     surface.blit(t3, (cx - t3.get_width()//2, text_y + 40))
 
 
-def draw_hud(surface, left_data, right_data, time_left, fonts, my_name, mode, assets):
+def draw_hud(surface, left_data, right_data, time_left, fonts, my_name, mode, assets,
+             sudden_death=False):
     """
     Floating rounded HUD card with yellow timer badge.
     Card: y=8 to y=86 — bricks start at y=90, so background is visible in the gap.
+    During sudden death the timer badge pulses red.
     """
     cx_mid = BOARD_X + BOARD_W // 2   # 424
 
@@ -539,15 +655,29 @@ def draw_hud(surface, left_data, right_data, time_left, fonts, my_name, mode, as
     BADGE_W, BADGE_H = 108, 60
     badge_x = cx_mid - BADGE_W // 2   # 370
     badge_y = CARD_Y + (CARD_H - BADGE_H) // 2   # 17
-    pygame.draw.rect(surface, (251, 224, 100),
+
+    if sudden_death:
+        pulse        = (pygame.time.get_ticks() // 300) % 2 == 0
+        badge_fill   = (220, 35, 35)  if pulse else (170, 15, 15)
+        badge_border = (140, 10, 10)
+        time_color   = (255, 230, 200)
+        label_color  = (255, 180, 180)
+    else:
+        badge_fill   = (251, 224, 100)
+        badge_border = (215, 181,  60)
+        time_color   = (120,  80,   0)
+        label_color  = TEXT_MID
+
+    pygame.draw.rect(surface, badge_fill,
                      (badge_x, badge_y, BADGE_W, BADGE_H), border_radius=28)
-    pygame.draw.rect(surface, (215, 181, 60),
+    pygame.draw.rect(surface, badge_border,
                      (badge_x, badge_y, BADGE_W, BADGE_H), 3, border_radius=28)
     mins = time_left // 60
     secs = time_left % 60
-    ts = fonts["timer"].render(f"{mins:02d}:{secs:02d}", True, (120, 80, 0))
+    ts = fonts["timer"].render(f"{mins:02d}:{secs:02d}", True, time_color)
     surface.blit(ts, (cx_mid - ts.get_width()//2, badge_y + 6))
-    tl = fonts["small"].render("TIME", True, TEXT_MID)
+    badge_label = "SUDDEN DEATH" if sudden_death else "TIME"
+    tl = fonts["small"].render(badge_label, True, label_color)
     surface.blit(tl, (cx_mid - tl.get_width()//2,
                        badge_y + BADGE_H - tl.get_height() - 6))
 
@@ -778,7 +908,11 @@ def draw_sidebar(surface, cheer_msgs, spectator_count,
 # BOTTOM BAR
 # =============================================================================
 
-def draw_bottom_bar(surface, spectator_count, fonts):
+def draw_bottom_bar(surface, spectator_count, fonts, mode="player"):
+    """
+    Bottom status strip.  For spectators, also draws a Leave button on the right.
+    Returns the Leave button Rect (spectator mode) or None (player mode).
+    """
     y = WINDOW_H - BOTTOM_H
     rect = pygame.Rect(0, y, SIDEBAR_X, BOTTOM_H)
     strip = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
@@ -794,11 +928,27 @@ def draw_bottom_bar(surface, spectator_count, fonts):
         txt = f"{spectator_count} spectators watching"
 
     lbl = fonts["small"].render(txt, True, TEXT_MID)
-    # Small colored dot as visual indicator instead of emoji
     dot_x = 16
     dot_y = y + BOTTOM_H // 2
     pygame.draw.circle(surface, TEAL, (dot_x, dot_y), 5)
     surface.blit(lbl, (dot_x + 12, dot_y - lbl.get_height() // 2))
+
+    # ── Spectator Leave button ────────────────────────────────────────────────
+    if mode != "spectator":
+        return None
+
+    BTN_W, BTN_H = 118, 24
+    BTN_X = SIDEBAR_X - BTN_W - 12
+    BTN_Y = y + (BOTTOM_H - BTN_H) // 2
+    leave_r = pygame.Rect(BTN_X, BTN_Y, BTN_W, BTN_H)
+
+    hov = leave_r.collidepoint(pygame.mouse.get_pos())
+    bg  = (210, 60, 60) if hov else (180, 50, 50)
+    pygame.draw.rect(surface, bg, leave_r, border_radius=7)
+    lt = fonts["small_bold"].render("Back to Lobby", True, (255, 255, 255))
+    surface.blit(lt, (leave_r.centerx - lt.get_width()//2,
+                      leave_r.centery - lt.get_height()//2))
+    return leave_r
 
 
 # =============================================================================
@@ -1120,6 +1270,8 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
     prev_state      = None
     last_state_time = 0
     obstacles       = None
+    fire_tiles      = []    # cached once when SD triggers — never changes after
+    sudden_death    = False  # mirrors game.sudden_death for rendering
 
     cheer_msgs      = []
     bubbles         = []
@@ -1130,7 +1282,8 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
     input_active = False
     sidebar_out = {"emoji_rects": {}, "input_rect": None}
 
-    result  = "lobby"
+    result   = "lobby"
+    leave_btn = None   # spectator Leave button rect — set each frame
     running = True
     while running:
         clock.tick(FPS)
@@ -1148,6 +1301,12 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                 last_state_time = pygame.time.get_ticks()
                 if obstacles is None and state:
                     obstacles = state["obstacles"]
+                # Fire tiles are fixed once SD triggers — cache on first non-empty value
+                if not fire_tiles and state and state.get("fire_tiles"):
+                    fire_tiles = state["fire_tiles"]
+                # Always mirror the SD flag so HUD / banner update live
+                if state:
+                    sudden_death = state.get("sudden_death", False)
 
             elif hdr == "PLAYERS_LIST":
                 players = protocol.parse_players_list(body)
@@ -1189,6 +1348,8 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                     prev_state      = None
                     last_state_time = 0
                     obstacles       = None
+                    fire_tiles      = []
+                    sudden_death    = False
                     cheer_msgs.append({"sender": "", "text": "⚔ Rematch!",
                                        "system": True})
                 else:
@@ -1228,18 +1389,25 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mx, my = event.pos
                 if mode == "spectator":
-                    for em, r in sidebar_out["emoji_rects"].items():
-                        if r.collidepoint(mx, my):
-                            protocol.send(sock, protocol.send_chat(em))
-                            # Emoji reactions: bubble only, never flood panel
-                            spawn_sidebar_bubble(sidebar_bubbles, em)
-                    ir = sidebar_out["input_rect"]
-                    input_active = bool(ir and ir.collidepoint(mx, my))
+                    # Leave button — return to lobby
+                    if leave_btn and leave_btn.collidepoint(mx, my):
+                        protocol.send(sock, protocol.send_leave_watch())
+                        result = "lobby"; running = False
+                    else:
+                        for em, r in sidebar_out["emoji_rects"].items():
+                            if r.collidepoint(mx, my):
+                                protocol.send(sock, protocol.send_chat(em))
+                                spawn_sidebar_bubble(sidebar_bubbles, em)
+                        ir = sidebar_out["input_rect"]
+                        input_active = bool(ir and ir.collidepoint(mx, my))
                 else:
                     input_active = False
 
             elif event.type == pygame.KEYDOWN:
-                if input_active and mode == "spectator":
+                if event.key == pygame.K_ESCAPE and mode == "spectator" and not input_active:
+                    protocol.send(sock, protocol.send_leave_watch())
+                    result = "lobby"; running = False
+                elif input_active and mode == "spectator":
                     if event.key == pygame.K_RETURN:
                         msg = input_text.strip()
                         if msg:
@@ -1257,16 +1425,25 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                         protocol.send(sock, protocol.send_move(direction))
 
         # ── Interpolation ─────────────────────────────────────────────────────
+        # During sudden death the server ticks twice as often, so the effective
+        # interval is halved — the lerp must match or the snake looks laggy.
+        _tick_interval = (SNAKE_MOVE_INTERVAL_MS / SUDDEN_DEATH_SPEED_MULT
+                          if sudden_death else SNAKE_MOVE_INTERVAL_MS)
         if last_state_time > 0:
             move_progress = min(
                 1.0,
-                (pygame.time.get_ticks() - last_state_time) / SNAKE_MOVE_INTERVAL_MS)
+                (pygame.time.get_ticks() - last_state_time) / _tick_interval)
         else:
             move_progress = 1.0
 
         # ── Draw ──────────────────────────────────────────────────────────────
         screen.blit(assets["bg"], (0, 0))
         draw_board(screen, assets)
+
+        # Fire tiles sit on top of grass, underneath obstacles and snakes
+        if fire_tiles:
+            draw_fire_tiles(screen, assets, fire_tiles)
+
         draw_border(screen, assets)
 
         if obstacles:
@@ -1295,12 +1472,13 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                        p2["invincible"], fonts)
 
             draw_hud(screen, left_data, right_data,
-                     state["time_left"], fonts, my_name, mode, assets)
+                     state["time_left"], fonts, my_name, mode, assets,
+                     sudden_death)
 
         sidebar_out = draw_sidebar(screen, cheer_msgs, spectator_count,
                                    mode, input_text, input_active, fonts, assets,
                                    sidebar_bubbles)
-        draw_bottom_bar(screen, spectator_count, fonts)
+        leave_btn = draw_bottom_bar(screen, spectator_count, fonts, mode)
 
         pygame.display.flip()
 

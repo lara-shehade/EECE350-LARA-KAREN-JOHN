@@ -19,6 +19,8 @@ from constants import (
     SNAKE_MOVE_INTERVAL_MS,
     INVINCIBILITY_MS,
     OPPOSITE,
+    SUDDEN_DEATH_THRESHOLD_S,
+    FIRE_DAMAGE,
 )
 
 # =============================================================================
@@ -283,6 +285,12 @@ class GameState:
         self.obstacles = list(OBSTACLES)
         self._obs_set  = _obstacle_set()
 
+        # ── Sudden death — must be initialised BEFORE _spawn_pie() is called ──
+        # _spawn_pie() references self._fire_set, so it must exist first.
+        self.sudden_death  = False
+        self._fire_tiles   = []   # list of (col, row) — fixed once SD triggers
+        self._fire_set     = set()  # same data as a set — O(1) collision lookup
+
         self.pies: list = []
         self._pending_respawns: list = []
 
@@ -295,7 +303,6 @@ class GameState:
         self._start_time_ms = _now_ms()
         self.game_over      = False
         self.winner         = None   # username string or "TIE"
-
     # ── Direction input ───────────────────────────────────────────────────────
 
     def set_direction(self, username, direction_str):
@@ -327,6 +334,7 @@ class GameState:
     def _spawn_pie(self):
         """Try to find a free cell. Returns (col, row, type) or None."""
         occupied = self._occupied_cells()
+        occupied.update(self._fire_set)   # pies never spawn on fire tiles
         for _ in range(100):
             col  = random.randint(0, GRID_COLS - 1)
             row  = random.randint(0, GRID_ROWS - 1)
@@ -347,6 +355,60 @@ class GameState:
             else:
                 still_pending.append(spawn_at)
         self._pending_respawns = still_pending
+
+    # ── Sudden death ─────────────────────────────────────────────────────────
+
+    def _compute_fire_tiles(self):
+        """
+        Called exactly once when sudden death triggers.
+
+        Places fire tiles on:
+          • Every tile on the outer ring of the grid (beside the brick border).
+          • Up to 10 random interior tiles, chosen so no snake is standing there
+            at the moment SD triggers (obstacles / pies are also avoided).
+
+        Results are stored in self._fire_tiles (list) and self._fire_set (set).
+        They do NOT change for the rest of the match.
+        """
+        fire = set()
+
+        # ── Border ring ───────────────────────────────────────────────────────
+        for col in range(GRID_COLS):
+            fire.add((col, 0))
+            fire.add((col, GRID_ROWS - 1))
+        for row in range(1, GRID_ROWS - 1):
+            fire.add((0, row))
+            fire.add((GRID_COLS - 1, row))
+
+        # ── 10 random interior tiles ──────────────────────────────────────────
+        occupied = self._occupied_cells()
+        occupied.update(fire)
+
+        interior = [
+            (c, r)
+            for c in range(1, GRID_COLS - 1)
+            for r in range(1, GRID_ROWS - 1)
+            if (c, r) not in occupied
+        ]
+        random.shuffle(interior)
+        for tile in interior[:10]:
+            fire.add(tile)
+
+        self._fire_tiles = list(fire)
+        self._fire_set   = fire
+
+        # ── Disintegrate any pies already sitting on fire tiles ───────────────
+        # They were placed before SD triggered so they weren't filtered out.
+        # Remove them instantly — no respawn scheduled, they just vanish.
+        self.pies = [p for p in self.pies if (p[0], p[1]) not in self._fire_set]
+
+    def _check_fire_collision(self, player: Player):
+        """
+        If the player's head is on a fire tile, apply FIRE_DAMAGE.
+        Only active during sudden death (guarded at call-site too).
+        """
+        if player.snake[0] in self._fire_set:
+            player.apply_damage(FIRE_DAMAGE)
 
     # ── Collision detection ───────────────────────────────────────────────────
 
@@ -382,9 +444,16 @@ class GameState:
         """
         Advance the game by one step.
         Called every SNAKE_MOVE_INTERVAL_MS by the server game loop thread.
+        During sudden death the server calls tick() twice as often, so the
+        effective snake speed doubles — no change needed inside this method.
         """
         if self.game_over:
             return
+
+        # 0. Sudden death trigger (checked once, never reverts)
+        if not self.sudden_death and self.time_left() <= SUDDEN_DEATH_THRESHOLD_S:
+            self.sudden_death = True
+            self._compute_fire_tiles()
 
         # 1. Move (wall damage handled inside Player.move)
         self.player1.move()
@@ -393,6 +462,11 @@ class GameState:
         # 2. Obstacle collisions
         self._check_obstacle_collision(self.player1)
         self._check_obstacle_collision(self.player2)
+
+        # 2b. Fire tile collisions (sudden death only)
+        if self.sudden_death:
+            self._check_fire_collision(self.player1)
+            self._check_fire_collision(self.player2)
 
         # 3. Pie collection
         self._check_pie_collection(self.player1)
@@ -462,9 +536,12 @@ class GameState:
         )
         """
         return {
-            "player1":   self.player1.to_dict(),
-            "player2":   self.player2.to_dict(),
-            "pies":      self.pies,
-            "obstacles": self.obstacles,
-            "time_left": self.time_left(),
+            "player1":      self.player1.to_dict(),
+            "player2":      self.player2.to_dict(),
+            "pies":         self.pies,
+            "obstacles":    self.obstacles,
+            "time_left":    self.time_left(),
+            # ── Sudden death ──────────────────────────────────────────────────
+            "sudden_death": self.sudden_death,
+            "fire_tiles":   self._fire_tiles,   # [] until SD triggers
         }

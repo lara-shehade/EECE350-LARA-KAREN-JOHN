@@ -10,6 +10,8 @@ import time
 import os
 import protocol
 
+BOT_NAME = "PyBot"     # must match bot.BOT_NAME
+
 # =============================================================================
 # THEME  (matches login.py exactly)
 # =============================================================================
@@ -273,12 +275,24 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
         return f"{s//60:02d}:{s%60:02d}"
 
     def _visible_players():
+        # Bot always appears at the top of the list — not from server
+        bot_entry = {
+            "username":   BOT_NAME,
+            "color":      [148, 148, 158],   # steel gray
+            "head_style": "robot",
+            "head_emoji": None,
+            "status":     "lobby",
+            "is_bot":     True,
+        }
         base = [p for p in players if p["username"] != my_name]
+        # Only show bot when no game is active and player is in lobby
+        # Always show the bot — server rejects Play if a game is already running
+        prefix = [bot_entry]
         if not search_text:
-            return base
+            return prefix + base
         q = search_text.lower().strip()
         if filter_mode == "username":
-            return [p for p in base if q in p["username"].lower()]
+            return prefix + [p for p in base if q in p["username"].lower()]
         # Status mode — map partial input to status keys
         status_map = {
             "lobby":       ["waiting", "wait"],
@@ -289,7 +303,7 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
         matching = {s for s, kws in status_map.items()
                     if any(kw.startswith(q) for kw in kws)}
         # If nothing matches at all → immediate no results
-        return [p for p in base if p.get("status") in matching]
+        return prefix + [p for p in base if p.get("status") in matching]
 
     # =========================================================================
     # DRAW FUNCTIONS
@@ -433,6 +447,7 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
         style  = p.get("head_style", "classic")
         emoji  = p.get("head_emoji") or ""
         is_me  = (uname == my_name)
+        is_bot = p.get("is_bot", False)
 
         # Card
         cr = pygame.Rect(10, ry, LEFT_W - 20, ROW_H - ROW_PAD)
@@ -449,17 +464,21 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
         nm = f_name.render(uname + (" (you)" if is_me else ""), True, TEXT_DARK)
         screen.blit(nm, (nx, cr.y + 12))
 
-        # Status — smooth dot + text, under username
-        sc_col = _sc(status)
-        dot_cx = nx + 5
-        dot_cy = cr.y + 42
-        try:
-            pygame.gfxdraw.filled_circle(screen, dot_cx, dot_cy, 4, sc_col)
-            pygame.gfxdraw.aacircle(screen, dot_cx, dot_cy, 4, sc_col)
-        except Exception:
-            pygame.draw.circle(screen, sc_col, (dot_cx, dot_cy), 4)
-        screen.blit(f_stat.render(_sl(status), True, TEXT_MID),
-                    (nx + 14, dot_cy - f_stat.get_height()//2))
+        # Status dot + label — hidden for bot, replaced with "AI Opponent"
+        if is_bot:
+            bot_lbl = f_stat.render("AI Opponent", True, (120, 120, 130))
+            screen.blit(bot_lbl, (nx + 14, cr.y + 36))
+        else:
+            sc_col = _sc(status)
+            dot_cx = nx + 5
+            dot_cy = cr.y + 42
+            try:
+                pygame.gfxdraw.filled_circle(screen, dot_cx, dot_cy, 4, sc_col)
+                pygame.gfxdraw.aacircle(screen, dot_cx, dot_cy, 4, sc_col)
+            except Exception:
+                pygame.draw.circle(screen, sc_col, (dot_cx, dot_cy), 4)
+            screen.blit(f_stat.render(_sl(status), True, TEXT_MID),
+                        (nx + 14, dot_cy - f_stat.get_height()//2))
 
         if is_me:
             return None, None, None
@@ -472,7 +491,16 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
         by = cr.centery - BH // 2
         btn_r = pygame.Rect(bx, by, BW, BH)
 
-        if status == "lobby":
+        # Bot: Play when idle, Busy when any game is active (only one session allowed)
+        if is_bot:
+            bot_busy = any(p2.get("status") == "in_game" for p2 in players)
+            if bot_busy:
+                _rrect(screen, BTN_DIS, btn_r, r=8)
+                bt = f_btn.render("Busy", True, BTN_DIS_T)
+            else:
+                _rrect(screen, TEAL_HOV if hov else TEAL, btn_r, r=8)
+                bt = f_btn.render("Play", True, WHITE)
+        elif status == "lobby":
             _rrect(screen, TEAL_HOV if hov else TEAL, btn_r, r=8)
             bt = f_btn.render("Challenge", True, WHITE)
         elif status == "in_game":
@@ -485,32 +513,32 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
         screen.blit(bt, (btn_r.centerx - bt.get_width()//2,
                          btn_r.centery - bt.get_height()//2))
 
-        # ── Chat icon button ──────────────────────────────────────────────────
-        CIW   = 30
-        chat_r = pygame.Rect(bx - CIW - 8, by, CIW, BH)
-        active = (uname == chat_target)
-        _rrect(screen, TEAL if active else (208, 232, 226), chat_r,
-               r=8, bw=1, bc=TEAL if active else CARD_BORDER)
-
-        if chat_icon:
-            icon = chat_icon_active if active else chat_icon
-            ix   = chat_r.centerx - ICON_SZ // 2
-            iy   = chat_r.centery - ICON_SZ // 2
-            screen.blit(icon, (ix, iy))
-        else:
-            fb = f_btn.render("💬", True, WHITE if active else TEXT_MID)
-            screen.blit(fb, (chat_r.centerx - fb.get_width()//2,
-                              chat_r.centery - fb.get_height()//2))
-
-        # Unread badge
-        count = unread.get(uname, 0)
-        if count > 0:
-            badge_r = pygame.Rect(chat_r.right - 10, chat_r.top - 6, 16, 16)
-            pygame.draw.circle(screen, (220, 50, 50),
-                               badge_r.center, 8)
-            bl = f_stat.render(str(count), True, WHITE)
-            screen.blit(bl, (badge_r.centerx - bl.get_width()//2,
-                              badge_r.centery - bl.get_height()//2))
+        # ── Chat icon button (hidden for bot) ────────────────────────────────────
+        chat_r = None
+        if not is_bot:
+            CIW   = 30
+            chat_r = pygame.Rect(bx - CIW - 8, by, CIW, BH)
+            active = (uname == chat_target)
+            _rrect(screen, TEAL if active else (208, 232, 226), chat_r,
+                   r=8, bw=1, bc=TEAL if active else CARD_BORDER)
+            if chat_icon:
+                icon = chat_icon_active if active else chat_icon
+                ix   = chat_r.centerx - ICON_SZ // 2
+                iy   = chat_r.centery - ICON_SZ // 2
+                screen.blit(icon, (ix, iy))
+            else:
+                fb = f_btn.render("💬", True, WHITE if active else TEXT_MID)
+                screen.blit(fb, (chat_r.centerx - fb.get_width()//2,
+                                  chat_r.centery - fb.get_height()//2))
+            # Unread badge
+            count = unread.get(uname, 0)
+            if count > 0:
+                badge_r = pygame.Rect(chat_r.right - 10, chat_r.top - 6, 16, 16)
+                pygame.draw.circle(screen, (220, 50, 50),
+                                   badge_r.center, 8)
+                bl2 = f_stat.render(str(count), True, WHITE)
+                screen.blit(bl2, (badge_r.centerx - bl2.get_width()//2,
+                                  badge_r.centery - bl2.get_height()//2))
 
         return btn_r, chat_r, status
 
@@ -869,12 +897,14 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
                             b3  = pygame.Rect(bx, by, BW, BH)
                             c3  = pygame.Rect(bx - 38, by, 30, BH)
                             if b3.collidepoint(mx, my2):
-                                if st == "lobby":
+                                if p.get("is_bot"):
+                                    protocol.send(sock, protocol.send_play_bot())
+                                elif st == "lobby":
                                     protocol.send(sock, protocol.send_challenge(un))
                                 elif st == "in_game":
                                     protocol.send(sock, "WATCH")
                                     result = "watch"; running = False
-                            elif c3.collidepoint(mx, my2):
+                            elif c3 and c3.collidepoint(mx, my2) and not p.get("is_bot"):
                                 if chat_target == un:
                                     chat_target = None
                                     chat_mode   = "public"

@@ -4,7 +4,8 @@ import time
 import sys
 import protocol
 from game import GameState
-from constants import SNAKE_MOVE_INTERVAL_MS
+from constants import SNAKE_MOVE_INTERVAL_MS, SUDDEN_DEATH_SPEED_MULT
+from bot import GreedyBot, BOT_NAME, BOT_INFO
 
 # =============================================================================
 # SERVER — Πthon Arena
@@ -126,8 +127,15 @@ def game_loop():
     global active_game
 
     while True:
-        # Sleep first — gives clients a moment after GAME_START to get ready
-        time.sleep(SNAKE_MOVE_INTERVAL_MS / 1000)
+        # Sleep first — gives clients a moment after GAME_START to get ready.
+        # During sudden death the server ticks SUDDEN_DEATH_SPEED_MULT times
+        # faster, making both snakes move at double speed.
+        _ag = active_game   # snapshot without lock — safe single-reference read
+        _sd = (_ag is not None and _ag["game"].sudden_death)
+        _interval = SNAKE_MOVE_INTERVAL_MS / 1000
+        if _sd:
+            _interval /= SUDDEN_DEATH_SPEED_MULT
+        time.sleep(_interval)
 
         # ── Step 1: Snapshot under lock ───────────────────────────────────────
         with players_lock:
@@ -149,10 +157,17 @@ def game_loop():
                         (uname, connected_players[uname]["socket"])
                     )
 
-        # ── Step 2: Tick (no lock needed — pure Python logic) ─────────────────
+        # ── Step 2: Bot move (before tick so direction is buffered) ──────────
+        bot_instance = active_game.get("bot") if active_game else None
+        if bot_instance is not None:
+            bot_dir = bot_instance.decide(game)
+            if bot_dir:
+                game.set_direction(BOT_NAME, bot_dir)
+
+        # ── Step 3 (was 2): Tick (no lock needed — pure Python logic) ───
         game.tick()
 
-        # ── Step 3: Build GAME_STATE ──────────────────────────────────────────
+        # ── Step 4: Build GAME_STATE ──────────────────────────────────────────
         state     = game.get_state()
         state_msg = protocol.game_state(
             state["player1"],
@@ -160,17 +175,19 @@ def game_loop():
             state["pies"],
             state["obstacles"],
             state["time_left"],
+            state["sudden_death"],
+            state["fire_tiles"],
         )
 
-        # ── Step 4: Broadcast GAME_STATE to players + spectators ──────────────
+        # ── Step 5: Broadcast GAME_STATE to players + spectators ──────────────
         _send_to_all(recipients, state_msg)
 
-        # ── Step 5: Check game over ───────────────────────────────────────────
+        # ── Step 6: Check game over ───────────────────────────────────────────
         over, winner = game.check_game_over()
         if not over:
             continue   # normal tick — sleep and go again
 
-        # ── Step 6: Game is over ──────────────────────────────────────────────
+        # ── Step 7: Game is over ──────────────────────────────────────────────
         h1       = state["player1"]["health"]
         h2       = state["player2"]["health"]
         over_msg = protocol.game_over(winner, h1, h2)
@@ -199,6 +216,57 @@ def game_loop():
         # 6c. Lobby screens see everyone is back
         broadcast_player_list()
         break   # thread exits cleanly
+
+
+# =============================================================================
+# BOT GAME
+# =============================================================================
+
+def handle_play_bot(username):
+    """
+    Start an immediate solo game against the bot.
+    No challenge/accept handshake needed — game begins instantly.
+    The bot is NOT added to connected_players (it has no socket).
+    """
+    global active_game
+
+    with players_lock:
+        if username not in connected_players:
+            return
+        if connected_players[username]["status"] != "lobby":
+            protocol.send(connected_players[username]["socket"],
+                          "ERROR:You are not in the lobby")
+            return
+        if active_game is not None:
+            protocol.send(connected_players[username]["socket"],
+                          "ERROR:A game is already in progress")
+            return
+
+        connected_players[username]["status"] = "in_game"
+
+        game_obj = GameState(
+            username, connected_players[username],
+            BOT_NAME, BOT_INFO,
+        )
+        active_game = {
+            "player1":    username,
+            "player2":    BOT_NAME,
+            "spectators": [],
+            "game":       game_obj,
+            "bot":        GreedyBot(BOT_NAME, username),  # bot instance
+        }
+        print(f"[BOT GAME] {username} vs {BOT_NAME}")
+
+    # Notify the human player — same messages as a normal game start
+    sock = connected_players[username]["socket"]
+    try:
+        protocol.send(sock, protocol.challenge_accepted(BOT_NAME))
+        protocol.send(sock, protocol.game_start())
+    except Exception as e:
+        print(f"[ERROR] bot game start notify: {e}")
+
+    broadcast_player_list()
+    threading.Thread(target=game_loop, daemon=True).start()
 
 
 # =============================================================================
@@ -374,8 +442,11 @@ def handle_watch(username):
     # Notify players + other spectators that a fan joined (outside the lock)
     fan_msg = protocol.fan_joined(username)
     with players_lock:
-        recipients = [(p1, connected_players[p1]["socket"]),
-                      (p2, connected_players[p2]["socket"])]
+        # Bot has no socket — only add a player if they're in connected_players
+        recipients = []
+        for uname in [p1, p2]:
+            if uname in connected_players:
+                recipients.append((uname, connected_players[uname]["socket"]))
         for spec in active_game.get("spectators", []):
             if spec != username and spec in connected_players:
                 recipients.append((spec, connected_players[spec]["socket"]))
@@ -484,14 +555,49 @@ def handle_rematch(username):
                      REMATCH_FROM sent to opponent (notifies them)
       Second player: both in pending → game starts immediately →
                      REMATCH_START sent to both
+
+    Bot shortcut:
+      If the last opponent was the bot, skip the handshake entirely —
+      immediately create a fresh bot game and send REMATCH_START.
     """
     global active_game
 
     with players_lock:
         opponent = last_game_pair.get(username)
-        if not opponent or opponent not in connected_players:
+        if not opponent:
             return
         if active_game is not None:
+            return
+
+        # ── Bot rematch — instant restart, no handshake needed ────────────────
+        if opponent == BOT_NAME:
+            if username not in connected_players:
+                return
+            connected_players[username]["status"] = "in_game"
+            active_game = {
+                "player1":    username,
+                "player2":    BOT_NAME,
+                "spectators": [],
+                "game":       GameState(
+                                  username, connected_players[username],
+                                  BOT_NAME, BOT_INFO,
+                              ),
+                "bot":        GreedyBot(BOT_NAME, username),
+            }
+            my_sock = connected_players[username]["socket"]
+            print(f"[BOT REMATCH] {username} vs {BOT_NAME}")
+
+    if opponent == BOT_NAME:
+        try:
+            protocol.send(my_sock, protocol.rematch_start())
+        except Exception as e:
+            print(f"[ERROR] bot rematch start: {e}")
+        broadcast_player_list()
+        threading.Thread(target=game_loop, daemon=True).start()
+        return
+
+    with players_lock:
+        if opponent not in connected_players:
             return
         # Don't allow double-request from same player
         if username in pending_rematches:
@@ -578,6 +684,24 @@ def handle_decline_rematch(username):
             print(f"[ERROR] rematch decline notify to {opp_name}: {e}")
 
 
+def handle_leave_watch(username):
+    """
+    Spectator wants to stop watching and return to lobby.
+    Removes them from active_game["spectators"] and resets their status.
+    """
+    with players_lock:
+        if username not in connected_players:
+            return
+        if connected_players[username]["status"] != "spectating":
+            return
+        connected_players[username]["status"] = "lobby"
+        if active_game and username in active_game.get("spectators", []):
+            active_game["spectators"].remove(username)
+        print(f"[SPECTATOR LEFT] {username} returned to lobby")
+
+    broadcast_player_list()
+
+
 # =============================================================================
 # CLIENT HANDLER
 # =============================================================================
@@ -626,6 +750,11 @@ def handle_client(client_socket, client_address):
                 protocol.send(client_socket, protocol.username_taken())
                 client_socket.close()
                 return
+            if requested_username == BOT_NAME:
+                print(f"[REJECTED] '{requested_username}' is reserved for the bot")
+                protocol.send(client_socket, protocol.username_taken())
+                client_socket.close()
+                return
 
             username = requested_username
             connected_players[username] = {
@@ -668,6 +797,12 @@ def handle_client(client_socket, client_address):
 
             elif header == "DECLINE_REMATCH":
                 handle_decline_rematch(username)
+
+            elif header == "PLAY_BOT":
+                handle_play_bot(username)
+
+            elif header == "LEAVE_WATCH":
+                handle_leave_watch(username)
 
             elif header == "MOVE":
                 # Only in-game players can move — spectators blocked explicitly

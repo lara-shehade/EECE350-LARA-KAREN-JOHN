@@ -132,6 +132,16 @@ def send_chat(message):
     return f"CHAT:{message}"
 
 
+def send_play_bot():
+    """Player wants to start a solo game against the bot."""
+    return "PLAY_BOT"
+
+
+def send_leave_watch():
+    """Spectator wants to stop watching and return to lobby."""
+    return "LEAVE_WATCH"
+
+
 # =============================================================================
 # SECTION 2: SERVER → CLIENT MESSAGES
 # These are called by the server to notify players about what's happening.
@@ -182,7 +192,8 @@ def game_start():
     return "GAME_START"
 
 
-def game_state(player1, player2, pies, obstacles, time_left):
+def game_state(player1, player2, pies, obstacles, time_left,
+               sudden_death=False, fire_tiles=None):
     """
     Server sends a full snapshot of the game to both players.
     This gets called every time the game updates (many times per second).
@@ -191,9 +202,11 @@ def game_state(player1, player2, pies, obstacles, time_left):
         {"username": "john", "snake": [(col, row), ...],   # grid coordinates e.g. (3, 7)
          "color": [0,180,50], "health": 80}
 
-    pies:       list of (x, y, type) for each pie on the board
-    obstacles:  list of (x, y, type) for each obstacle
-    time_left:  seconds remaining in the game (int)
+    pies:         list of (x, y, type) for each pie on the board
+    obstacles:    list of (x, y, type) for each obstacle
+    time_left:    seconds remaining in the game (int)
+    sudden_death: True once the last 30 seconds begin
+    fire_tiles:   list of (col, row) that are on fire — empty until SD triggers
     """
     state = {
         "player1": {
@@ -214,9 +227,11 @@ def game_state(player1, player2, pies, obstacles, time_left):
             "head_emoji": player2["head_emoji"],
             "invincible": player2["invincible"]
         },
-        "pies":      pies,
-        "obstacles": obstacles,
-        "time_left": time_left
+        "pies":         pies,
+        "obstacles":    obstacles,
+        "time_left":    time_left,
+        "sudden_death": sudden_death,
+        "fire_tiles":   fire_tiles if fire_tiles is not None else [],
     }
     return "GAME_STATE:" + json.dumps(state)
 
