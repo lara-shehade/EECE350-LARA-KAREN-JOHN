@@ -48,7 +48,9 @@ def main():
         sys.exit(1)
 
     # ── Init pygame ───────────────────────────────────────────────────────────
+    pygame.mixer.pre_init(44100, -16, 2, 512)
     pygame.init()
+    
 
     # Load game assets once — shared across all matches
     assets = load_assets()
