@@ -28,6 +28,7 @@ key_value_font  = pygame.font.SysFont("Arial", 16)
 # ─── Assets ───
 ground_img = pygame.image.load("assets/ground.png").convert_alpha()
 GROUND_HEIGHT = 130
+KEY_PRESS_SOUND_PATH = os.path.join("assets", "sound-8.mp3")
 ground_img = pygame.transform.scale(ground_img, (WIDTH, GROUND_HEIGHT))
 
 cloud_img = pygame.image.load("assets/cloud.png").convert_alpha()
@@ -46,7 +47,7 @@ for c in clouds:
 CUSTOMIZE_MUSIC_PATH = os.path.join("assets", "customizesnakemusic.mp3")
 
 
-def _play_looping_music(path, volume=0.4):
+def _play_looping_music(path, volume=0.2):
     if not path or not os.path.exists(path):
         return False
     try:
@@ -67,6 +68,23 @@ def _stop_music():
             pygame.mixer.music.stop()
     except Exception:
         pass
+
+
+def _play_key_press_sound():
+    """
+    Play a one-shot sound for key/button presses.
+    """
+    if not os.path.exists(KEY_PRESS_SOUND_PATH):
+        return
+
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+        sound = pygame.mixer.Sound(KEY_PRESS_SOUND_PATH)
+        sound.set_volume(0.8)
+        sound.play()
+    except Exception as e:
+        print(f"[AUDIO] Could not play key press sound: {e}")
 
 
 # =============================================================================
@@ -444,6 +462,7 @@ def run_login_screen(initial_error=""):
                 running = False
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
+                _play_key_press_sound()
                 mx, my = event.pos
 
                 if screen_state == "login":
@@ -515,6 +534,7 @@ def run_login_screen(initial_error=""):
                 selected_hue = (mx - BAR_X) / BAR_W
 
             elif event.type == pygame.KEYDOWN:
+                _play_key_press_sound()
                 if screen_state == "customize" and emoji_active:
                     if event.key == pygame.K_BACKSPACE:
                         emoji_text = emoji_text[:-1]

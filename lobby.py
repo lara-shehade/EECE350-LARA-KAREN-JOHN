@@ -12,6 +12,7 @@ import protocol
 
 BOT_NAME = "PyBot"     # must match bot.BOT_NAME
 LOBBY_MUSIC_PATH = os.path.join("assets", "lobbymusic.mp3")
+KEY_PRESS_SOUND_PATH = os.path.join("assets", "sound-8.mp3")
 
 # =============================================================================
 # THEME  (matches login.py exactly)
@@ -141,12 +142,29 @@ def _start_lobby_music():
         if pygame.mixer.get_init() is None:
             pygame.mixer.init()
         pygame.mixer.music.load(LOBBY_MUSIC_PATH)
-        pygame.mixer.music.set_volume(0.4)
+        pygame.mixer.music.set_volume(0.2)
         pygame.mixer.music.play(-1)
         return True
     except Exception as e:
         print(f"[AUDIO] Could not start lobby music: {e}")
         return False
+
+
+def _play_key_press_sound():
+    """
+    Play a one-shot sound for key/button presses.
+    """
+    if not os.path.exists(KEY_PRESS_SOUND_PATH):
+        return
+
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+        sound = pygame.mixer.Sound(KEY_PRESS_SOUND_PATH)
+        sound.set_volume(0.8)
+        sound.play()
+    except Exception as e:
+        print(f"[AUDIO] Could not play key press sound: {e}")
 
 
 def _draw_avatar(surf, cx, cy, r, color, style, emoji, f_em):
@@ -837,6 +855,7 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
                 scroll_off = max(0, scroll_off - event.y * 22)
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                _play_key_press_sound()
                 mx, my2 = event.pos
 
                 # Popup first
@@ -934,6 +953,7 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
                         ry += ROW_H
 
             elif event.type == pygame.KEYDOWN:
+                _play_key_press_sound()
                 if search_active:
                     if event.key == pygame.K_ESCAPE:
                         search_active = False

@@ -108,9 +108,10 @@ BUBBLE_LIFETIME_MS = 4000
 
 # ── Spectator emoji buttons ───────────────────────────────────────────────────
 QUICK_EMOJIS = ["👏", "❤️", "💀", "🔥", "😢"]
-BACKGROUND_MUSIC_PATH = os.path.join("assets", "backgroudmusic.mp3")
+BACKGROUND_MUSIC_PATH = os.path.join("assets", "backgroundmusic.mp3")
 GAME_WON_SOUND_PATH = os.path.join("assets", "gamewonsoundeffect.mp3")
 GAME_LOST_SOUND_PATH = os.path.join("assets", "gamelostsoundeffect.mp3")
+KEY_PRESS_SOUND_PATH = os.path.join("assets", "sound-8.mp3")
 
 
 # =============================================================================
@@ -166,7 +167,7 @@ def _start_background_music():
         if pygame.mixer.get_init() is None:
             pygame.mixer.init()
         pygame.mixer.music.load(BACKGROUND_MUSIC_PATH)
-        pygame.mixer.music.set_volume(0.4)
+        pygame.mixer.music.set_volume(0.2)
         pygame.mixer.music.play(-1)
         return True
     except Exception as e:
@@ -202,6 +203,23 @@ def _play_game_over_sound(mode, winner, local_name):
         sound.play()
     except Exception as e:
         print(f"[AUDIO] Could not play game-over sound: {e}")
+
+
+def _play_key_press_sound():
+    """
+    Play a one-shot sound for key/button presses.
+    """
+    if not os.path.exists(KEY_PRESS_SOUND_PATH):
+        return
+
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+        sound = pygame.mixer.Sound(KEY_PRESS_SOUND_PATH)
+        sound.set_volume(0.8)
+        sound.play()
+    except Exception as e:
+        print(f"[AUDIO] Could not play key press sound: {e}")
 
 
 def load_assets():
@@ -1172,6 +1190,7 @@ def _run_game_over(surface, clock, fonts, screenshot,
                 return "quit"
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                _play_key_press_sound()
                 mx, my = event.pos
                 if btn_lobby.collidepoint(mx, my):
                     protocol.send(sock, protocol.send_decline_rematch())
@@ -1185,6 +1204,7 @@ def _run_game_over(surface, clock, fonts, screenshot,
                     rematch_state = "queued"
 
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+                _play_key_press_sound()
                 protocol.send(sock, protocol.send_decline_rematch())
                 return "lobby"
 
@@ -1444,6 +1464,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                 result = "quit"; running = False
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                _play_key_press_sound()
                 mx, my = event.pos
                 if mode == "spectator":
                     # Leave button — return to lobby
@@ -1461,6 +1482,8 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                     input_active = False
 
             elif event.type == pygame.KEYDOWN:
+                if not (mode == "player" and not input_active and key_to_dir.get(event.key)):
+                    _play_key_press_sound()
                 if event.key == pygame.K_ESCAPE and mode == "spectator" and not input_active:
                     protocol.send(sock, protocol.send_leave_watch())
                     result = "lobby"; running = False
