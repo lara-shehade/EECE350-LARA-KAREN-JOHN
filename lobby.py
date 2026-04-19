@@ -953,7 +953,6 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
                         ry += ROW_H
 
             elif event.type == pygame.KEYDOWN:
-                _play_key_press_sound()
                 if search_active:
                     if event.key == pygame.K_ESCAPE:
                         search_active = False

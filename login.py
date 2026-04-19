@@ -534,7 +534,6 @@ def run_login_screen(initial_error=""):
                 selected_hue = (mx - BAR_X) / BAR_W
 
             elif event.type == pygame.KEYDOWN:
-                _play_key_press_sound()
                 if screen_state == "customize" and emoji_active:
                     if event.key == pygame.K_BACKSPACE:
                         emoji_text = emoji_text[:-1]

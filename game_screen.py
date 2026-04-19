@@ -1204,7 +1204,6 @@ def _run_game_over(surface, clock, fonts, screenshot,
                     rematch_state = "queued"
 
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
-                _play_key_press_sound()
                 protocol.send(sock, protocol.send_decline_rematch())
                 return "lobby"
 
@@ -1482,8 +1481,6 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                     input_active = False
 
             elif event.type == pygame.KEYDOWN:
-                if not (mode == "player" and not input_active and key_to_dir.get(event.key)):
-                    _play_key_press_sound()
                 if event.key == pygame.K_ESCAPE and mode == "spectator" and not input_active:
                     protocol.send(sock, protocol.send_leave_watch())
                     result = "lobby"; running = False
