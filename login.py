@@ -462,7 +462,6 @@ def run_login_screen(initial_error=""):
                 running = False
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                _play_key_press_sound()
                 mx, my = event.pos
 
                 if screen_state == "login":
@@ -473,21 +472,26 @@ def run_login_screen(initial_error=""):
 
                     username_active = user_rect.collidepoint(mx, my)
                     if username_active:
+                        _play_key_press_sound()
                         binding_active = None
 
                     for idx, key_name in enumerate(["UP", "DOWN", "LEFT", "RIGHT"]):
                         bx  = KEYS_X + idx * (KEY_BOX_W + KEY_GAP)
                         box = pygame.Rect(bx, KEYS_Y, KEY_BOX_W, KEY_BOX_H)
                         if box.collidepoint(mx, my):
+                            _play_key_press_sound()
                             binding_active  = key_name
                             username_active = False
 
                     if cust_rect.collidepoint(mx, my):
+                        _play_key_press_sound()
+                        _play_key_press_sound()
                         screen_state    = "customize"
                         username_active = False
                         binding_active  = None
 
                     if join_rect.collidepoint(mx, my):
+                        _play_key_press_sound()
                         if username.strip():
                             result = {
                                 "username":   username.strip(),
@@ -501,6 +505,7 @@ def run_login_screen(initial_error=""):
                             error_msg = "Please enter a username"
 
                     if exit_rect.collidepoint(mx, my):
+                        _play_key_press_sound()
                         running = False
 
                 elif screen_state == "customize":
@@ -514,15 +519,20 @@ def run_login_screen(initial_error=""):
                     emoji_active = False
 
                     if bar_rect.collidepoint(mx, my):
+                        _play_key_press_sound()
                         dragging_color = True
                     elif classic_rect.collidepoint(mx, my):
+                        _play_key_press_sound()
                         head_style = "classic"
                     elif emoji_b_rect.collidepoint(mx, my):
+                        _play_key_press_sound()
                         head_style = "emoji"
                     elif head_style == "emoji" and einput_rect.collidepoint(mx, my):
+                        _play_key_press_sound()
                         emoji_active = True
 
                     if save_rect.collidepoint(mx, my) or back_rect.collidepoint(mx, my):
+                        _play_key_press_sound()
                         screen_state = "login"
                         emoji_active = False
 

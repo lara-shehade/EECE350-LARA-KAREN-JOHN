@@ -855,25 +855,28 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
                 scroll_off = max(0, scroll_off - event.y * 22)
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                _play_key_press_sound()
                 mx, my2 = event.pos
 
                 # Popup first
                 if challenge_from:
                     acc_r, dec_r = draw_popup()
                     if acc_r and acc_r.collidepoint(mx, my2):
+                        _play_key_press_sound()
                         protocol.send(sock, protocol.send_accept(challenge_from))
                         challenge_from = None
                     elif dec_r and dec_r.collidepoint(mx, my2):
+                        _play_key_press_sound()
                         protocol.send(sock, protocol.send_decline(challenge_from))
                         challenge_from = None
                     continue
 
                 # Dropdown options
                 if filter_dropdown and _opt1_r and _opt1_r.collidepoint(mx, my2):
+                    _play_key_press_sound()
                     filter_mode = "username"; filter_dropdown = False
                     search_text = ""; continue
                 if filter_dropdown and _opt2_r and _opt2_r.collidepoint(mx, my2):
+                    _play_key_press_sound()
                     filter_mode = "status"; filter_dropdown = False
                     search_text = ""; continue
                 if filter_dropdown:
@@ -881,12 +884,14 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
 
                 # Mode pill — toggle dropdown
                 if _pill_r and _pill_r.collidepoint(mx, my2):
+                    _play_key_press_sound()
                     filter_dropdown = not filter_dropdown
                     search_active   = False; continue
 
                 # Input bar or icon btn — activate search typing
                 if ((_bar_r and _bar_r.collidepoint(mx, my2)) or
                         (_icon_r and _icon_r.collidepoint(mx, my2))):
+                    _play_key_press_sound()
                     search_active   = True
                     filter_dropdown = False
                     input_active    = False; continue
@@ -895,13 +900,17 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
                 pub_r2, priv_r2, inp_r2, snd_r2 = _chat_rects
                 if None not in (pub_r2, priv_r2, inp_r2, snd_r2) and mx >= LEFT_W:
                     if pub_r2.collidepoint(mx, my2):
+                        _play_key_press_sound()
                         chat_mode = "public"; chat_target = None
                     elif priv_r2.collidepoint(mx, my2):
+                        _play_key_press_sound()
                         chat_mode = "private"
                     elif inp_r2.collidepoint(mx, my2):
+                        _play_key_press_sound()
                         input_active  = True
                         search_active = False
                     elif snd_r2.collidepoint(mx, my2) and input_text.strip():
+                        _play_key_press_sound()
                         m = input_text.strip()
                         if chat_mode == "public":
                             chat_msgs.append({
@@ -933,6 +942,7 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
                             b3  = pygame.Rect(bx, by, BW, BH)
                             c3  = pygame.Rect(bx - 38, by, 30, BH)
                             if b3.collidepoint(mx, my2):
+                                _play_key_press_sound()
                                 if p.get("is_bot"):
                                     protocol.send(sock, protocol.send_play_bot())
                                 elif st == "lobby":
@@ -941,6 +951,7 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
                                     protocol.send(sock, "WATCH")
                                     result = "watch"; running = False
                             elif c3 and c3.collidepoint(mx, my2) and not p.get("is_bot"):
+                                _play_key_press_sound()
                                 if chat_target == un:
                                     chat_target = None
                                     chat_mode   = "public"

@@ -1190,9 +1190,9 @@ def _run_game_over(surface, clock, fonts, screenshot,
                 return "quit"
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                _play_key_press_sound()
                 mx, my = event.pos
                 if btn_lobby.collidepoint(mx, my):
+                    _play_key_press_sound()
                     protocol.send(sock, protocol.send_decline_rematch())
                     return "lobby"
                 # Rematch button — players only
@@ -1200,6 +1200,7 @@ def _run_game_over(surface, clock, fonts, screenshot,
                              and not disconnect
                              and rematch_state in (None, "incoming"))
                 if can_click and btn_rematch.collidepoint(mx, my):
+                    _play_key_press_sound()
                     protocol.send(sock, protocol.send_rematch())
                     rematch_state = "queued"
 
@@ -1463,20 +1464,23 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                 result = "quit"; running = False
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                _play_key_press_sound()
                 mx, my = event.pos
                 if mode == "spectator":
                     # Leave button — return to lobby
                     if leave_btn and leave_btn.collidepoint(mx, my):
+                        _play_key_press_sound()
                         protocol.send(sock, protocol.send_leave_watch())
                         result = "lobby"; running = False
                     else:
                         for em, r in sidebar_out["emoji_rects"].items():
                             if r.collidepoint(mx, my):
+                                _play_key_press_sound()
                                 protocol.send(sock, protocol.send_chat(em))
                                 spawn_sidebar_bubble(sidebar_bubbles, em)
                         ir = sidebar_out["input_rect"]
                         input_active = bool(ir and ir.collidepoint(mx, my))
+                        if input_active:
+                            _play_key_press_sound()
                 else:
                     input_active = False
 
