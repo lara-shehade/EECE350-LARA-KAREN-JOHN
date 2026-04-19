@@ -268,6 +268,24 @@ def load_assets():
     fireball_img = _load_img(os.path.join("assets", "fireball.png"), max_px=52)
     a["fireball"] = fireball_img   # may be None — draw_fire_tiles handles gracefully
 
+    # ── Audio ─────────────────────────────────────────────────────────────────
+    # Background music — loops forever during the match, stopped on game over.
+    try:
+        pygame.mixer.music.load(os.path.join("assets", "backgroundmusic.mp3"))
+        pygame.mixer.music.set_volume(0.5)
+        pygame.mixer.music.play(-1)  # -1 = loop forever
+    except Exception as e:
+        print(f"[AUDIO] Could not load background music: {e}")
+
+    # Win / lose sound effects — played once on game over screen.
+    a["snd_win"]  = None
+    a["snd_lose"] = None
+    try:
+        a["snd_win"]  = pygame.mixer.Sound(os.path.join("assets", "gamewonsoundeffect.mp3"))
+        a["snd_lose"] = pygame.mixer.Sound(os.path.join("assets", "gamelostsoundeffect.mp3"))
+    except Exception as e:
+        print(f"[AUDIO] Could not load win/lose sounds: {e}")
+
     return a
 
 
@@ -1316,6 +1334,16 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
             elif hdr == "GAME_OVER":
                 winner, h1, h2, reason = protocol.parse_game_over(body)
 
+                # ── Stop background music and play win/lose sound ─────────────
+                pygame.mixer.music.stop()
+                if mode == "player":
+                    if winner == my_name:
+                        snd = assets.get("snd_win")
+                        if snd: snd.play()
+                    elif winner != "TIE":
+                        snd = assets.get("snd_lose")
+                        if snd: snd.play()
+
                 if state:
                     p1, p2 = state["player1"], state["player2"]
                 else:
@@ -1352,6 +1380,11 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                     sudden_death    = False
                     cheer_msgs.append({"sender": "", "text": "⚔ Rematch!",
                                        "system": True})
+                    # Restart background music for the new round
+                    try:
+                        pygame.mixer.music.play(-1)
+                    except Exception:
+                        pass
                 else:
                     result  = go_result   # "lobby" or "quit"
                     running = False
