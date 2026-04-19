@@ -1,6 +1,7 @@
 import pygame
 import sys
 import colorsys
+import os
 pygame.init()
 
 WIDTH = 600
@@ -40,6 +41,32 @@ for c in clouds:
     nw, nh = int(ow * c["scale"]), int(oh * c["scale"])
     c["img"]   = pygame.transform.smoothscale(cloud_img, (nw, nh))
     c["width"] = nw
+
+
+CUSTOMIZE_MUSIC_PATH = os.path.join("assets", "customizesnakemusic.mp3")
+
+
+def _play_looping_music(path, volume=0.4):
+    if not path or not os.path.exists(path):
+        return False
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+        pygame.mixer.music.load(path)
+        pygame.mixer.music.set_volume(volume)
+        pygame.mixer.music.play(-1)
+        return True
+    except Exception as e:
+        print(f"[AUDIO] Could not start music '{path}': {e}")
+        return False
+
+
+def _stop_music():
+    try:
+        if pygame.mixer.get_init() is not None:
+            pygame.mixer.music.stop()
+    except Exception:
+        pass
 
 
 # =============================================================================
@@ -401,8 +428,17 @@ def run_login_screen(initial_error=""):
 
     result  = None
     running = True
+    current_music_path = None
 
     while running:
+        desired_music_path = CUSTOMIZE_MUSIC_PATH
+        if desired_music_path != current_music_path:
+            _stop_music()
+            if desired_music_path and _play_looping_music(desired_music_path):
+                current_music_path = desired_music_path
+            else:
+                current_music_path = None
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -523,6 +559,7 @@ def run_login_screen(initial_error=""):
         pygame.display.flip()
         clock.tick(60)
 
+    _stop_music()
     return result
 
 

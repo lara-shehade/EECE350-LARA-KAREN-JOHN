@@ -11,6 +11,7 @@ import os
 import protocol
 
 BOT_NAME = "PyBot"     # must match bot.BOT_NAME
+LOBBY_MUSIC_PATH = os.path.join("assets", "lobbymusic.mp3")
 
 # =============================================================================
 # THEME  (matches login.py exactly)
@@ -133,6 +134,21 @@ def _scroll_clouds(screen, clouds):
         screen.blit(c["img"], (int(c["x"]), c["y"]))
 
 
+def _start_lobby_music():
+    if not os.path.exists(LOBBY_MUSIC_PATH):
+        return False
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+        pygame.mixer.music.load(LOBBY_MUSIC_PATH)
+        pygame.mixer.music.set_volume(0.4)
+        pygame.mixer.music.play(-1)
+        return True
+    except Exception as e:
+        print(f"[AUDIO] Could not start lobby music: {e}")
+        return False
+
+
 def _draw_avatar(surf, cx, cy, r, color, style, emoji, f_em):
     """
     Smooth anti-aliased snake-head avatar.
@@ -185,6 +201,7 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
     pygame.display.set_caption("Πthon Arena — Lobby")
     screen = pygame.display.get_surface()
     clock  = pygame.time.Clock()
+    music_started = _start_lobby_music()
 
     # ── Fonts ─────────────────────────────────────────────────────────────────
     f_title = pygame.font.SysFont("comicsansms", 28, bold=True)
@@ -989,5 +1006,11 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
         _bar_r, _pill_r, _icon_r, _opt1_r, _opt2_r = draw_search_bar()
 
         pygame.display.flip()
+
+    if music_started:
+        try:
+            pygame.mixer.music.stop()
+        except Exception:
+            pass
 
     return result

@@ -108,6 +108,9 @@ BUBBLE_LIFETIME_MS = 4000
 
 # ── Spectator emoji buttons ───────────────────────────────────────────────────
 QUICK_EMOJIS = ["👏", "❤️", "💀", "🔥", "😢"]
+BACKGROUND_MUSIC_PATH = os.path.join("assets", "backgroudmusic.mp3")
+GAME_WON_SOUND_PATH = os.path.join("assets", "gamewonsoundeffect.mp3")
+GAME_LOST_SOUND_PATH = os.path.join("assets", "gamelostsoundeffect.mp3")
 
 
 # =============================================================================
@@ -150,6 +153,55 @@ def _fallback_surf(color, size):
     s = pygame.Surface((size, size), pygame.SRCALPHA)
     pygame.draw.rect(s, color, s.get_rect(), border_radius=6)
     return s
+
+
+def _start_background_music():
+    """
+    Start looping match music if the asset and mixer are available.
+    Returns True when this function actually started playback.
+    """
+    if not os.path.exists(BACKGROUND_MUSIC_PATH):
+        return False
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+        pygame.mixer.music.load(BACKGROUND_MUSIC_PATH)
+        pygame.mixer.music.set_volume(0.4)
+        pygame.mixer.music.play(-1)
+        return True
+    except Exception as e:
+        print(f"[AUDIO] Could not start background music: {e}")
+        return False
+
+
+def _stop_background_music():
+    try:
+        if pygame.mixer.get_init() is not None:
+            pygame.mixer.music.stop()
+    except Exception:
+        pass
+
+
+def _play_game_over_sound(mode, winner, local_name):
+    """
+    Play a one-shot end-of-match sound for the local player.
+    Spectators and ties get no result sound.
+    """
+    if mode != "player" or winner == "TIE":
+        return
+
+    sound_path = GAME_WON_SOUND_PATH if winner == local_name else GAME_LOST_SOUND_PATH
+    if not os.path.exists(sound_path):
+        return
+
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+        sound = pygame.mixer.Sound(sound_path)
+        sound.set_volume(0.6)
+        sound.play()
+    except Exception as e:
+        print(f"[AUDIO] Could not play game-over sound: {e}")
 
 
 def load_assets():
@@ -1235,6 +1287,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
     screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
     pygame.display.set_caption("Πthon Arena — Match")
     clock  = pygame.time.Clock()
+    music_started = _start_background_music()
 
     # bug 8 fix — all fonts created once here, passed down into helpers
     fonts = {
@@ -1315,6 +1368,8 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
 
             elif hdr == "GAME_OVER":
                 winner, h1, h2, reason = protocol.parse_game_over(body)
+                _stop_background_music()
+                _play_game_over_sound(mode, winner, my_name)
 
                 if state:
                     p1, p2 = state["player1"], state["player2"]
@@ -1343,6 +1398,8 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                     msg_q, sock)
 
                 if go_result == "rematch":
+                    if music_started:
+                        music_started = _start_background_music()
                     # Reset game state — new GAME_STATE messages will arrive
                     state           = None
                     prev_state      = None
@@ -1481,5 +1538,8 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
         leave_btn = draw_bottom_bar(screen, spectator_count, fonts, mode)
 
         pygame.display.flip()
+
+    if music_started:
+        _stop_background_music()
 
     return result
