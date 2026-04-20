@@ -11,8 +11,9 @@ import os
 import protocol
 
 BOT_NAME = "PyBot"     # must match bot.BOT_NAME
-LOBBY_MUSIC_PATH = os.path.join("assets", "lobbymusic.mp3")
+LOBBY_MUSIC_PATH = os.path.join("assets", "lobby.mp3")
 KEY_PRESS_SOUND_PATH = os.path.join("assets", "sound-8.mp3")
+BUTTON_SOUND_PATH = os.path.join("assets", "button_lara.mp3")
 
 # =============================================================================
 # THEME  (matches login.py exactly)
@@ -165,6 +166,23 @@ def _play_key_press_sound():
         sound.play()
     except Exception as e:
         print(f"[AUDIO] Could not play key press sound: {e}")
+
+
+def _play_button_sound():
+    """
+    Play the main action-button sound.
+    """
+    if not os.path.exists(BUTTON_SOUND_PATH):
+        return
+
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+        sound = pygame.mixer.Sound(BUTTON_SOUND_PATH)
+        sound.set_volume(0.45)
+        sound.play()
+    except Exception as e:
+        print(f"[AUDIO] Could not play button sound: {e}")
 
 
 def _draw_avatar(surf, cx, cy, r, color, style, emoji, f_em):
@@ -861,11 +879,11 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
                 if challenge_from:
                     acc_r, dec_r = draw_popup()
                     if acc_r and acc_r.collidepoint(mx, my2):
-                        _play_key_press_sound()
+                        _play_button_sound()
                         protocol.send(sock, protocol.send_accept(challenge_from))
                         challenge_from = None
                     elif dec_r and dec_r.collidepoint(mx, my2):
-                        _play_key_press_sound()
+                        _play_button_sound()
                         protocol.send(sock, protocol.send_decline(challenge_from))
                         challenge_from = None
                     continue
@@ -891,7 +909,6 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
                 # Input bar or icon btn — activate search typing
                 if ((_bar_r and _bar_r.collidepoint(mx, my2)) or
                         (_icon_r and _icon_r.collidepoint(mx, my2))):
-                    _play_key_press_sound()
                     search_active   = True
                     filter_dropdown = False
                     input_active    = False; continue
@@ -906,7 +923,6 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
                         _play_key_press_sound()
                         chat_mode = "private"
                     elif inp_r2.collidepoint(mx, my2):
-                        _play_key_press_sound()
                         input_active  = True
                         search_active = False
                     elif snd_r2.collidepoint(mx, my2) and input_text.strip():
@@ -942,12 +958,16 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
                             b3  = pygame.Rect(bx, by, BW, BH)
                             c3  = pygame.Rect(bx - 38, by, 30, BH)
                             if b3.collidepoint(mx, my2):
-                                _play_key_press_sound()
                                 if p.get("is_bot"):
-                                    protocol.send(sock, protocol.send_play_bot())
+                                    bot_busy = any(p2.get("status") == "in_game" for p2 in players)
+                                    if not bot_busy:
+                                        _play_button_sound()
+                                        protocol.send(sock, protocol.send_play_bot())
                                 elif st == "lobby":
+                                    _play_button_sound()
                                     protocol.send(sock, protocol.send_challenge(un))
                                 elif st == "in_game":
+                                    _play_button_sound()
                                     protocol.send(sock, "WATCH")
                                     result = "watch"; running = False
                             elif c3 and c3.collidepoint(mx, my2) and not p.get("is_bot"):

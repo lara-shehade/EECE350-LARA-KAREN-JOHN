@@ -108,10 +108,15 @@ BUBBLE_LIFETIME_MS = 4000
 
 # ── Spectator emoji buttons ───────────────────────────────────────────────────
 QUICK_EMOJIS = ["👏", "❤️", "💀", "🔥", "😢"]
-BACKGROUND_MUSIC_PATH = os.path.join("assets", "backgroundmusic.mp3")
+BACKGROUND_MUSIC_PATH = os.path.join("assets", "game.mp3")
 GAME_WON_SOUND_PATH = os.path.join("assets", "gamewonsoundeffect.mp3")
 GAME_LOST_SOUND_PATH = os.path.join("assets", "gamelostsoundeffect.mp3")
 KEY_PRESS_SOUND_PATH = os.path.join("assets", "sound-8.mp3")
+BUTTON_SOUND_PATH = os.path.join("assets", "button_lara.mp3")
+FRICTION_SOUND_PATH = os.path.join("assets", "friction.mp3")
+PIE_SOUND_PATH = os.path.join("assets", "pie_sound.mp3")
+HIT_SOUND_PATH = os.path.join("assets", "hit_sound.mp3")
+_friction_sound = None
 
 
 # =============================================================================
@@ -220,6 +225,115 @@ def _play_key_press_sound():
         sound.play()
     except Exception as e:
         print(f"[AUDIO] Could not play key press sound: {e}")
+
+
+def _play_button_sound():
+    """
+    Play the main action-button sound.
+    """
+    if not os.path.exists(BUTTON_SOUND_PATH):
+        return
+
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+        sound = pygame.mixer.Sound(BUTTON_SOUND_PATH)
+        sound.set_volume(0.45)
+        sound.play()
+    except Exception as e:
+        print(f"[AUDIO] Could not play button sound: {e}")
+
+
+def _play_friction_sound():
+    """
+    Play a short field-movement friction sound.
+    """
+    global _friction_sound
+    if not os.path.exists(FRICTION_SOUND_PATH):
+        return
+
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+        if _friction_sound is None:
+            _friction_sound = pygame.mixer.Sound(FRICTION_SOUND_PATH)
+            _friction_sound.set_volume(0.35)
+        _friction_sound.play()
+    except Exception as e:
+        print(f"[AUDIO] Could not play friction sound: {e}")
+
+
+def _play_pie_sound():
+    """
+    Play when the local player's snake eats a pie.
+    """
+    if not os.path.exists(PIE_SOUND_PATH):
+        return
+
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+        sound = pygame.mixer.Sound(PIE_SOUND_PATH)
+        sound.set_volume(0.2)
+        sound.play()
+    except Exception as e:
+        print(f"[AUDIO] Could not play pie sound: {e}")
+
+
+def _play_hit_sound():
+    """
+    Play when the local player's snake takes obstacle damage.
+    """
+    if not os.path.exists(HIT_SOUND_PATH):
+        return
+
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+        sound = pygame.mixer.Sound(HIT_SOUND_PATH)
+        sound.set_volume(0.2)
+        sound.play()
+    except Exception as e:
+        print(f"[AUDIO] Could not play hit sound: {e}")
+
+
+def _xy(cell):
+    return tuple(cell[:2])
+
+
+def _player_from_state(state, username):
+    if not state:
+        return None
+    for key in ("player1", "player2"):
+        player = state.get(key)
+        if player and player.get("username") == username:
+            return player
+    return None
+
+
+def _local_ate_pie(prev, current, local_name):
+    player = _player_from_state(current, local_name)
+    if not prev or not player or not player.get("snake"):
+        return False
+
+    head = _xy(player["snake"][0])
+    previous_pies = {_xy(pie) for pie in prev.get("pies", [])}
+    current_pies = {_xy(pie) for pie in current.get("pies", [])}
+    return head in previous_pies and head not in current_pies
+
+
+def _local_hit_obstacle(prev, current, local_name):
+    old_player = _player_from_state(prev, local_name)
+    new_player = _player_from_state(current, local_name)
+    if not old_player or not new_player or not new_player.get("snake"):
+        return False
+
+    if new_player.get("health", 0) >= old_player.get("health", 0):
+        return False
+
+    head = _xy(new_player["snake"][0])
+    obstacle_cells = {_xy(obs) for obs in current.get("obstacles", [])}
+    return head in obstacle_cells
 
 
 def load_assets():
@@ -1192,7 +1306,7 @@ def _run_game_over(surface, clock, fonts, screenshot,
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mx, my = event.pos
                 if btn_lobby.collidepoint(mx, my):
-                    _play_key_press_sound()
+                    _play_button_sound()
                     protocol.send(sock, protocol.send_decline_rematch())
                     return "lobby"
                 # Rematch button — players only
@@ -1372,6 +1486,11 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                 prev_state      = state
                 state           = protocol.parse_game_state(body)
                 last_state_time = pygame.time.get_ticks()
+                if mode == "player":
+                    if _local_ate_pie(prev_state, state, my_name):
+                        _play_pie_sound()
+                    if _local_hit_obstacle(prev_state, state, my_name):
+                        _play_hit_sound()
                 if obstacles is None and state:
                     obstacles = state["obstacles"]
                 # Fire tiles are fixed once SD triggers — cache on first non-empty value
@@ -1468,7 +1587,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                 if mode == "spectator":
                     # Leave button — return to lobby
                     if leave_btn and leave_btn.collidepoint(mx, my):
-                        _play_key_press_sound()
+                        _play_button_sound()
                         protocol.send(sock, protocol.send_leave_watch())
                         result = "lobby"; running = False
                     else:
@@ -1479,8 +1598,6 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                                 spawn_sidebar_bubble(sidebar_bubbles, em)
                         ir = sidebar_out["input_rect"]
                         input_active = bool(ir and ir.collidepoint(mx, my))
-                        if input_active:
-                            _play_key_press_sound()
                 else:
                     input_active = False
 
@@ -1504,6 +1621,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                     direction = key_to_dir.get(event.key)
                     if direction:
                         protocol.send(sock, protocol.send_move(direction))
+                        _play_friction_sound()
 
         # ── Interpolation ─────────────────────────────────────────────────────
         # During sudden death the server ticks twice as often, so the effective

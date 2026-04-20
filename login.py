@@ -29,6 +29,7 @@ key_value_font  = pygame.font.SysFont("Arial", 16)
 ground_img = pygame.image.load("assets/ground.png").convert_alpha()
 GROUND_HEIGHT = 130
 KEY_PRESS_SOUND_PATH = os.path.join("assets", "sound-8.mp3")
+BUTTON_SOUND_PATH = os.path.join("assets", "button_lara.mp3")
 ground_img = pygame.transform.scale(ground_img, (WIDTH, GROUND_HEIGHT))
 
 cloud_img = pygame.image.load("assets/cloud.png").convert_alpha()
@@ -44,7 +45,7 @@ for c in clouds:
     c["width"] = nw
 
 
-CUSTOMIZE_MUSIC_PATH = os.path.join("assets", "customizesnakemusic.mp3")
+CUSTOMIZE_MUSIC_PATH = os.path.join("assets", "login.mp3")
 
 
 def _play_looping_music(path, volume=0.2):
@@ -85,6 +86,23 @@ def _play_key_press_sound():
         sound.play()
     except Exception as e:
         print(f"[AUDIO] Could not play key press sound: {e}")
+
+
+def _play_button_sound():
+    """
+    Play the main action-button sound.
+    """
+    if not os.path.exists(BUTTON_SOUND_PATH):
+        return
+
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init()
+        sound = pygame.mixer.Sound(BUTTON_SOUND_PATH)
+        sound.set_volume(0.45)
+        sound.play()
+    except Exception as e:
+        print(f"[AUDIO] Could not play button sound: {e}")
 
 
 # =============================================================================
@@ -484,14 +502,13 @@ def run_login_screen(initial_error=""):
                             username_active = False
 
                     if cust_rect.collidepoint(mx, my):
-                        _play_key_press_sound()
-                        _play_key_press_sound()
+                        _play_button_sound()
                         screen_state    = "customize"
                         username_active = False
                         binding_active  = None
 
                     if join_rect.collidepoint(mx, my):
-                        _play_key_press_sound()
+                        _play_button_sound()
                         if username.strip():
                             result = {
                                 "username":   username.strip(),
@@ -505,7 +522,7 @@ def run_login_screen(initial_error=""):
                             error_msg = "Please enter a username"
 
                     if exit_rect.collidepoint(mx, my):
-                        _play_key_press_sound()
+                        _play_button_sound()
                         running = False
 
                 elif screen_state == "customize":
@@ -519,7 +536,6 @@ def run_login_screen(initial_error=""):
                     emoji_active = False
 
                     if bar_rect.collidepoint(mx, my):
-                        _play_key_press_sound()
                         dragging_color = True
                     elif classic_rect.collidepoint(mx, my):
                         _play_key_press_sound()
@@ -532,7 +548,7 @@ def run_login_screen(initial_error=""):
                         emoji_active = True
 
                     if save_rect.collidepoint(mx, my) or back_rect.collidepoint(mx, my):
-                        _play_key_press_sound()
+                        _play_button_sound()
                         screen_state = "login"
                         emoji_active = False
 
