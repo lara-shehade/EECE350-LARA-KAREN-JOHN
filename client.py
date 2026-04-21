@@ -18,8 +18,8 @@ from game_screen import run_game_screen, load_assets
 # =============================================================================
 # CLIENT-SIDE CONSTANTS
 # =============================================================================
-SERVER_HOST = "127.0.0.1"
-#SERVER_HOST = "10.169.9.116"   # change to LAN IP for multi-machine play
+#SERVER_HOST = "127.0.0.1"
+SERVER_HOST = "192.168.1.13"   # change to LAN IP for multi-machine play
 #10.169.9.116
 
 WINDOW_WIDTH  = 800
