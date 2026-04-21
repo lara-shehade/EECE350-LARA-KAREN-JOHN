@@ -193,7 +193,7 @@ def game_start():
 
 
 def game_state(player1, player2, pies, obstacles, time_left,
-               sudden_death=False, fire_tiles=None):
+               sudden_death=False, fire_tiles=None, move_id=0):
     """
     Server sends a full snapshot of the game to both players.
     This gets called every time the game updates (many times per second).
@@ -216,6 +216,7 @@ def game_state(player1, player2, pies, obstacles, time_left,
             "health":     player1["health"],
             "head_style": player1["head_style"],
             "head_emoji": player1["head_emoji"],
+            "direction":  player1.get("direction", "RIGHT"),
             "invincible": player1["invincible"]
         },
         "player2": {
@@ -225,11 +226,13 @@ def game_state(player1, player2, pies, obstacles, time_left,
             "health":     player2["health"],
             "head_style": player2["head_style"],
             "head_emoji": player2["head_emoji"],
+            "direction":  player2.get("direction", "LEFT"),
             "invincible": player2["invincible"]
         },
         "pies":         pies,
         "obstacles":    obstacles,
         "time_left":    time_left,
+        "move_id":      move_id,
         "sudden_death": sudden_death,
         "fire_tiles":   fire_tiles if fire_tiles is not None else [],
     }

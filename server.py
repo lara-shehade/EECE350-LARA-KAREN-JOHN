@@ -4,7 +4,11 @@ import time
 import sys
 import protocol
 from game import GameState
-from constants import SNAKE_MOVE_INTERVAL_MS, SUDDEN_DEATH_SPEED_MULT
+from constants import (
+    SNAKE_MOVE_INTERVAL_MS,
+    GAME_STATE_SEND_INTERVAL_MS,
+    SUDDEN_DEATH_SPEED_MULT,
+)
 from bot import GreedyBot, BOT_NAME, BOT_INFO
 
 # =============================================================================
@@ -127,17 +131,13 @@ def game_loop():
     """
     global active_game
 
-    while True:
-        # Sleep first — gives clients a moment after GAME_START to get ready.
-        # During sudden death the server ticks SUDDEN_DEATH_SPEED_MULT times
-        # faster, making both snakes move at double speed.
-        _ag = active_game   # snapshot without lock — safe single-reference read
-        _sd = (_ag is not None and _ag["game"].sudden_death)
-        _interval = SNAKE_MOVE_INTERVAL_MS / 1000
-        if _sd:
-            _interval /= SUDDEN_DEATH_SPEED_MULT
-        time.sleep(_interval)
+    last_move_time = time.monotonic()
+    last_send_time = 0
 
+    while True:
+        now = time.monotonic()
+        move_interval = SNAKE_MOVE_INTERVAL_MS / 1000
+        send_interval = GAME_STATE_SEND_INTERVAL_MS / 1000
         # ── Step 1: Snapshot under lock ───────────────────────────────────────
         with players_lock:
             if active_game is None:
@@ -147,6 +147,7 @@ def game_loop():
             game       = active_game["game"]
             p1_name    = active_game["player1"]
             p2_name    = active_game["player2"]
+            bot_instance = active_game.get("bot")
             spectators = list(active_game["spectators"])   # copy — safe
 
             # Snapshot (username, socket) for every recipient.
@@ -159,33 +160,47 @@ def game_loop():
                     )
 
         # ── Step 2: Bot move (before tick so direction is buffered) ──────────
-        bot_instance = active_game.get("bot") if active_game else None
-        if bot_instance is not None:
+        if game.sudden_death:
+            move_interval /= SUDDEN_DEATH_SPEED_MULT
+
+        did_tick = False
+        if now - last_move_time >= move_interval and bot_instance is not None:
             bot_dir = bot_instance.decide(game)
             if bot_dir:
                 game.set_direction(BOT_NAME, bot_dir)
 
         # ── Step 3 (was 2): Tick (no lock needed — pure Python logic) ───
-        game.tick()
+        if now - last_move_time >= move_interval:
+            game.tick()
+            last_move_time = now
+            did_tick = True
 
         # ── Step 4: Build GAME_STATE ──────────────────────────────────────────
         state     = game.get_state()
-        state_msg = protocol.game_state(
-            state["player1"],
-            state["player2"],
-            state["pies"],
-            state["obstacles"],
-            state["time_left"],
-            state["sudden_death"],
-            state["fire_tiles"],
-        )
+        if did_tick or now - last_send_time >= send_interval:
+            state_msg = protocol.game_state(
+                state["player1"],
+                state["player2"],
+                state["pies"],
+                state["obstacles"],
+                state["time_left"],
+                state["sudden_death"],
+                state["fire_tiles"],
+                state["move_id"],
+            )
 
         # ── Step 5: Broadcast GAME_STATE to players + spectators ──────────────
-        _send_to_all(recipients, state_msg)
+            _send_to_all(recipients, state_msg)
+            last_send_time = now
 
         # ── Step 6: Check game over ───────────────────────────────────────────
+        if not did_tick:
+            time.sleep(0.005)
+            continue
+
         over, winner = game.check_game_over()
         if not over:
+            time.sleep(0.005)
             continue   # normal tick — sleep and go again
 
         # ── Step 7: Game is over ──────────────────────────────────────────────

@@ -19,6 +19,7 @@ from constants import (
     SNAKE_MOVE_INTERVAL_MS,
     INVINCIBILITY_MS,
     OPPOSITE,
+    DIRECTION_NAMES,
     SUDDEN_DEATH_THRESHOLD_S,
     FIRE_DAMAGE,
 )
@@ -221,6 +222,7 @@ class Player:
             "health":     self.health,
             "head_style": self.head_style,
             "head_emoji": self.head_emoji,
+            "direction":  DIRECTION_NAMES.get(self._next_dir, "RIGHT"),
             "invincible": self.is_invincible(),  # client uses this to flash
         }
 
@@ -303,6 +305,7 @@ class GameState:
         self._start_time_ms = _now_ms()
         self.game_over      = False
         self.winner         = None   # username string or "TIE"
+        self.move_id        = 0
     # ── Direction input ───────────────────────────────────────────────────────
 
     def set_direction(self, username, direction_str):
@@ -458,6 +461,7 @@ class GameState:
         # 1. Move (wall damage handled inside Player.move)
         self.player1.move()
         self.player2.move()
+        self.move_id += 1
 
         # 2. Obstacle collisions
         self._check_obstacle_collision(self.player1)
@@ -541,6 +545,7 @@ class GameState:
             "pies":         self.pies,
             "obstacles":    self.obstacles,
             "time_left":    self.time_left(),
+            "move_id":      self.move_id,
             # ── Sudden death ──────────────────────────────────────────────────
             "sudden_death": self.sudden_death,
             "fire_tiles":   self._fire_tiles,   # [] until SD triggers

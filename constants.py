@@ -14,6 +14,7 @@ GRID_ROWS  = 15   # 600px // 40
 
 # ── Timing ────────────────────────────────────────────────────────────────────
 SNAKE_MOVE_INTERVAL_MS = 250   # server ticks + client animates at this rate
+GAME_STATE_SEND_INTERVAL_MS = 50  # server broadcasts state without speeding movement
 
 # ── Invincibility ─────────────────────────────────────────────────────────────
 # Server grants this after any damage hit.
