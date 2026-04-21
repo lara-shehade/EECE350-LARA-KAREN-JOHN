@@ -502,6 +502,48 @@ def _infer_direction(snake):
     return (max(-1, min(1, dx)), max(-1, min(1, dy)))
 
 
+_DIR_TO_VEC = {
+    "UP":    (0, -1),
+    "DOWN":  (0,  1),
+    "LEFT":  (-1, 0),
+    "RIGHT": (1,  0),
+}
+
+_OPPOSITE_VEC = {
+    (0, -1): (0,  1),
+    (0,  1): (0, -1),
+    (-1, 0): (1,  0),
+    (1,  0): (-1, 0),
+}
+
+
+def _predict_snake_turn(snake, direction_name):
+    """
+    Client-side visual prediction for the local player's next move.
+    The server still owns the real game state; this only removes input lag.
+    """
+    if not snake:
+        return None
+
+    direction = _DIR_TO_VEC.get(direction_name)
+    if direction is None:
+        return None
+
+    current_dir = _infer_direction(snake)
+    if direction == current_dir:
+        return None
+    if direction == _OPPOSITE_VEC.get(current_dir):
+        return None
+
+    head = snake[0]
+    new_head = (head[0] + direction[0], head[1] + direction[1])
+    if (new_head[0] < 0 or new_head[0] >= GRID_COLS or
+            new_head[1] < 0 or new_head[1] >= GRID_ROWS):
+        return None
+
+    return [new_head] + list(snake[:-1])
+
+
 def _truncate(name, max_chars=14):
     return name if len(name) <= max_chars else name[:13] + "…"
 
@@ -1459,6 +1501,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
     obstacles       = None
     fire_tiles      = []    # cached once when SD triggers — never changes after
     sudden_death    = False  # mirrors game.sudden_death for rendering
+    local_prediction = None
 
     cheer_msgs      = []
     bubbles         = []
@@ -1486,6 +1529,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                 prev_state      = state
                 state           = protocol.parse_game_state(body)
                 last_state_time = pygame.time.get_ticks()
+                local_prediction = None
                 if mode == "player":
                     if _local_ate_pie(prev_state, state, my_name):
                         _play_pie_sound()
@@ -1546,6 +1590,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                     obstacles       = None
                     fire_tiles      = []
                     sudden_death    = False
+                    local_prediction = None
                     cheer_msgs.append({"sender": "", "text": "⚔ Rematch!",
                                        "system": True})
                 else:
@@ -1621,6 +1666,10 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                     direction = key_to_dir.get(event.key)
                     if direction:
                         protocol.send(sock, protocol.send_move(direction))
+                        local_prediction = {
+                            "direction": direction,
+                            "start": pygame.time.get_ticks(),
+                        }
                         _play_friction_sound()
 
         # ── Interpolation ─────────────────────────────────────────────────────
@@ -1663,10 +1712,31 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
             prev_p1 = prev_state["player1"]["snake"] if prev_state else p1["snake"]
             prev_p2 = prev_state["player2"]["snake"] if prev_state else p2["snake"]
 
-            draw_snake(screen, p1["snake"], prev_p1, move_progress,
+            p1_snake, p1_prev, p1_progress = p1["snake"], prev_p1, move_progress
+            p2_snake, p2_prev, p2_progress = p2["snake"], prev_p2, move_progress
+
+            if mode == "player" and local_prediction:
+                prediction_progress = min(
+                    1.0,
+                    (pygame.time.get_ticks() - local_prediction["start"]) /
+                    _tick_interval)
+                if p1["username"] == my_name:
+                    predicted = _predict_snake_turn(
+                        p1["snake"], local_prediction["direction"])
+                    if predicted:
+                        p1_snake, p1_prev = predicted, p1["snake"]
+                        p1_progress = prediction_progress
+                elif p2["username"] == my_name:
+                    predicted = _predict_snake_turn(
+                        p2["snake"], local_prediction["direction"])
+                    if predicted:
+                        p2_snake, p2_prev = predicted, p2["snake"]
+                        p2_progress = prediction_progress
+
+            draw_snake(screen, p1_snake, p1_prev, p1_progress,
                        tuple(p1["color"]), p1["head_style"], p1["head_emoji"],
                        p1["invincible"], fonts)
-            draw_snake(screen, p2["snake"], prev_p2, move_progress,
+            draw_snake(screen, p2_snake, p2_prev, p2_progress,
                        tuple(p2["color"]), p2["head_style"], p2["head_emoji"],
                        p2["invincible"], fonts)
 
