@@ -71,6 +71,7 @@ def broadcast_player_list():
         for uname, info in connected_players.items():
             player_data.append({
                 "username":   uname,
+                "ip":         info["address"][0],
                 "color":      info["color"],
                 "head_style": info["head_style"],
                 "head_emoji": info["head_emoji"],

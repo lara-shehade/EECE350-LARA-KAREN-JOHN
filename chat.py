@@ -158,7 +158,7 @@ class P2PChat:
             for p in players_list:
                 if p["username"] != self._username:
                     self._players[p["username"]] = {
-                        "ip":        "127.0.0.1",   # same machine for now
+                        "ip":        p.get("ip", "127.0.0.1"),
                         "chat_port": p.get("chat_port", 0),
                     }
 

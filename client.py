@@ -18,8 +18,9 @@ from game_screen import run_game_screen, load_assets
 # =============================================================================
 # CLIENT-SIDE CONSTANTS
 # =============================================================================
-
-SERVER_HOST = "127.0.0.1"   # change to LAN IP for multi-machine play
+SERVER_HOST = "127.0.0.1"
+#SERVER_HOST = "10.169.9.116"   # change to LAN IP for multi-machine play
+#10.169.9.116
 
 WINDOW_WIDTH  = 800
 WINDOW_HEIGHT = 600
@@ -113,7 +114,10 @@ def main():
             sock = None
             continue
 
-        header, _ = protocol.parse(response)
+        header, body = protocol.parse(response)
+
+        if header == "PTHON_ARENA":
+            header = body
 
         if header == "USERNAME_TAKEN":
             # Server rejected — show error on login screen
@@ -167,7 +171,8 @@ def main():
             break
 
         # Unexpected response
-        server_error = f"Unexpected response: {header}"
+        server_error = f"Wrong server reply: {response[:80]}"
+        print(f"[CLIENT] Wrong server reply from {SERVER_HOST}:{SERVER_PORT}: {response!r}")
         sock.close()
         sock = None
 
