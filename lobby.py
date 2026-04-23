@@ -846,6 +846,11 @@ def run_lobby_screen(sock, player_info, chat, msg_q):
                     "from": "System",
                     "message": f"{body} declined your challenge.",
                     "private": False, "system": True})
+            elif hdr == "ERROR":
+                chat_msgs.append({
+                    "from": "System",
+                    "message": body or "Something went wrong.",
+                    "private": False, "system": True})
             elif hdr == "GAME_START":
                 match_start_ts = time.time()
                 result  = "game"; running = False; break

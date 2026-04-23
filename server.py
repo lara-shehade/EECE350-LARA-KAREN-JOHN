@@ -295,6 +295,10 @@ def handle_challenge(challenger, opponent):
     Validates both are in lobby, records challenge, notifies opponent.
     """
     with players_lock:
+        if active_game is not None:
+            protocol.send(connected_players[challenger]["socket"],
+                          "ERROR:A match is already in progress")
+            return
         if opponent not in connected_players:
             protocol.send(connected_players[challenger]["socket"],
                           "ERROR:Player not found")
