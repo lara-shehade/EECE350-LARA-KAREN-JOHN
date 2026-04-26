@@ -9,30 +9,17 @@ from chat import P2PChat
 from lobby import run_lobby_screen
 from game_screen import run_game_screen, load_assets
 
-# =============================================================================
+# Server connection settings
+SERVER_HOST = "10.169.12.107"
 
-# How to run:
-#   python client.py 5555
-# =============================================================================
-
-# =============================================================================
-# CLIENT-SIDE CONSTANTS
-# =============================================================================
-#SERVER_HOST = "127.0.0.1"
-SERVER_HOST = "10.169.12.107"   # change to LAN IP for multi-machine play
-#10.169.9.116
-
+# Window settings
 WINDOW_WIDTH  = 800
 WINDOW_HEIGHT = 600
 FPS           = 60
 CAPTION       = "Πthon Arena"
 
-# =============================================================================
-# ENTRY POINT
-# =============================================================================
-
 def main():
-    # ── Validate command line argument ────────────────────────────────────────
+    # Check port argument
     if len(sys.argv) != 2:
         print("Usage: python client.py <port>")
         print("Example: python client.py 5555")
@@ -44,42 +31,37 @@ def main():
         print("Error: Port must be a number")
         sys.exit(1)
 
+    # Validate port range
     if SERVER_PORT < 1024 or SERVER_PORT > 65535:
         print("Error: Port must be between 1024 and 65535")
         sys.exit(1)
 
-    # ── Init pygame ───────────────────────────────────────────────────────────
+    # Start pygame
     pygame.init()
 
-    # Load game assets once — shared across all matches
+    # Load game assets once
     assets = load_assets()
 
-    # ── Login loop ────────────────────────────────────────────────────────────
-    # We loop here so that if the server rejects the username,
-    # we come back to the login screen with an error message.
     server_error = ""
     sock         = None
 
     while True:
-        # Show login screen — if server rejected last attempt, show the error
+        # Show login screen
         result = run_login_screen(initial_error=server_error)
 
         if result is None:
-            # Player clicked EXIT
             break
 
-        # ── Start P2P chat listener ───────────────────────────────────────────
-        # Must be created AFTER login so we know the username,
-        # and BEFORE connect so we have the port ready for JOIN.
+        # Start chat listener
         chat = P2PChat(result["username"])
         chat.start()
 
-        # ── Try to connect to the server ──────────────────────────────────────
+        # Connect to server
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(5)
             sock.connect((SERVER_HOST, SERVER_PORT))
-            sock.settimeout(None)   # blocking mode after connect
+            sock.settimeout(None)
         except ConnectionRefusedError:
             server_error = "Cannot connect — is the server running?"
             sock = None
@@ -89,7 +71,7 @@ def main():
             sock = None
             continue
 
-        # ── Send JOIN ─────────────────────────────────────────────────────────
+        # Send player info to server
         join_msg = protocol.send_join(
             username   = result["username"],
             color      = list(result["color"]),
@@ -105,7 +87,7 @@ def main():
             sock = None
             continue
 
-        # ── Wait for server response ──────────────────────────────────────────
+        # Wait for server reply
         try:
             response = protocol.receive(sock)
         except Exception as e:
@@ -120,7 +102,6 @@ def main():
             header = body
 
         if header == "USERNAME_TAKEN":
-            # Server rejected — show error on login screen
             server_error = "Username already taken"
             sock.close()
             sock = None
@@ -130,12 +111,10 @@ def main():
             print(f"[CLIENT] Joined as '{result['username']}'")
             print(f"[CLIENT] Connected to {SERVER_HOST}:{SERVER_PORT}")
 
-            # ── Single shared receiver thread — started once, never restarted ──
-            # One thread reads all server messages into one queue.
-            # Both lobby and game screen drain the same queue so no message
-            # is ever consumed by the wrong screen.
+            # Queue for server messages
             msg_q = queue.Queue()
 
+            # Receive messages from server
             def _rx_thread():
                 while True:
                     try:
@@ -150,7 +129,7 @@ def main():
             threading.Thread(target=_rx_thread, daemon=True,
                              name="client-rx").start()
 
-            # ── Inner loop — lobby ↔ game until quit ──────────────────────────
+            # Switch between lobby and game
             while True:
                 lobby_result = run_lobby_screen(sock, result, chat, msg_q)
                 if lobby_result == "game":
@@ -164,19 +143,18 @@ def main():
                                                   assets=assets,
                                                   msg_q=msg_q)
                 else:
-                    break   # lobby returned "quit"
+                    break
                 if game_result == "quit":
-                    break   # window closed during game
-                # game_result == "lobby" → loop back to lobby screen
+                    break
             break
 
-        # Unexpected response
+        # Handle unexpected server reply
         server_error = f"Wrong server reply: {response[:80]}"
         print(f"[CLIENT] Wrong server reply from {SERVER_HOST}:{SERVER_PORT}: {response!r}")
         sock.close()
         sock = None
 
-    # ── Cleanup ───────────────────────────────────────────────────────────────
+    # Close connection
     if sock:
         sock.close()
     try:
@@ -188,11 +166,6 @@ def main():
 
 
 def _placeholder_connected_screen(sock, player_info):
-    """
-    Temporary screen shown after successful login.
-    Displays 'Connected!' until we build the lobby in Step 2.
-    Press ESC or close window to exit.
-    """
     screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
     pygame.display.set_caption(CAPTION)
     clock  = pygame.time.Clock()
@@ -203,6 +176,7 @@ def _placeholder_connected_screen(sock, player_info):
 
     running = True
     while running:
+        # Handle user input
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -212,7 +186,7 @@ def _placeholder_connected_screen(sock, player_info):
 
         screen.fill((135, 206, 235))
 
-        # Green tick + connected message
+        # Connected message
         msg    = font_big.render("Connected to server!", True, (20, 100, 20))
         shadow = font_big.render("Connected to server!", True, (60, 60, 60))
         screen.blit(shadow, (WINDOW_WIDTH//2 - msg.get_width()//2 + 2, 202))
@@ -222,7 +196,7 @@ def _placeholder_connected_screen(sock, player_info):
             f"Logged in as:  {player_info['username']}", True, (40, 60, 40))
         screen.blit(sub, (WINDOW_WIDTH//2 - sub.get_width()//2, 270))
 
-        # Snake color swatch
+        # Show player color
         pygame.draw.rect(screen, color,       (WINDOW_WIDTH//2 - 40, 310, 80, 30), border_radius=6)
         pygame.draw.rect(screen, (0, 0, 0),   (WINDOW_WIDTH//2 - 40, 310, 80, 30), 2, border_radius=6)
         clbl = font_small.render("Your color", True, (40, 60, 40))
