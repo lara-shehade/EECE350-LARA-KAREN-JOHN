@@ -1,36 +1,9 @@
-# =============================================================================
-# game_screen.py — Πthon Arena
-# =============================================================================
-# Full game screen for both players and spectators.
-#
-# Entry point called from client.py:
-#
-#   from game_screen import run_game_screen, load_assets
-#   assets = load_assets()
-#   result = run_game_screen(
-#       sock        = sock,
-#       player_info = player_info,
-#       mode        = "player" | "spectator",
-#       assets      = assets,
-#   )
-#   # result → "lobby" | "quit"
-#
-# Server integration
-# ──────────────────
-# Background receiver thread → queue → drained every frame:
-#   GAME_STATE   → prev_state / state updated, timestamp recorded
-#   PLAYERS_LIST → spectator_count derived accurately   (bug 4 fix)
-#   GAME_OVER    → game-over overlay, returns "lobby"
-#   CHAT         → sidebar message + floating bubble (player mode)
-#   FAN_JOINED   → system message in sidebar
-#   DISCONNECT   → returns "quit"
-#
-# move_progress = (now − last_state_time) / SNAKE_MOVE_INTERVAL_MS  [0..1]
-# Used by draw_snake() to lerp every segment between consecutive states.
-# =============================================================================
+# This file handles the full match screen for both players and spectators.
+# It draws the board, snakes, HUD, sidebar, bottom bar, and game-over screen.
+# Server messages are read through a queue, and snake movement is animated smoothly between updates so the game does not look jumpy.
 
-import math
-import os
+import math  #used for animations espcially the fire tiles math.sin()
+import os  #used to check whether files exist before loading them 
 import queue
 import random
 import threading
@@ -41,9 +14,7 @@ import pygame.gfxdraw
 import protocol
 from constants import TILE_SIZE, GRID_COLS, GRID_ROWS, SNAKE_MOVE_INTERVAL_MS, SUDDEN_DEATH_SPEED_MULT
 
-# =============================================================================
-# THEME  — identical to lobby.py / login.py
-# =============================================================================
+# Theme colors that match login and lobby
 
 SKY_BLUE    = (135, 206, 235)
 WHITE       = (255, 255, 255)
@@ -57,15 +28,13 @@ TEXT_DARK   = (22,  42,  35)
 TEXT_MID    = (82, 108,  94)
 TEXT_LIGHT  = (152, 176, 165)
 
-# Game-specific colors
+# Colors used only on the game screen.
 BAR_EMPTY   = (180, 210, 200)
 CHEER_BG    = (210, 238, 230)
 INPUT_BG    = (224, 244, 238)
 INPUT_ACT   = (200, 235, 225)
 
-# =============================================================================
-# LAYOUT  — change one constant and everything reflows
-# =============================================================================
+# Layout values for the board, HUD, sidebar, and window.
 
 BRICK_THICKNESS = 24
 BOARD_LEFT_MARGIN = 20                             # background strip visible left of bricks
@@ -83,7 +52,7 @@ WINDOW_H   = BOARD_Y + BOARD_H + BRICK_THICKNESS + BOTTOM_H
 FPS        = 60
 AVA_R      = 20
 
-# ── Asset sizes ───────────────────────────────────────────────────────────────
+# Asset sizes.
 PIE_MAX_PX = 52
 OBSTACLE_SIZES = {
     "cactus":    50,
@@ -93,7 +62,7 @@ OBSTACLE_SIZES = {
     "dirtyPond": 54,
 }
 
-# ── Snake geometry ────────────────────────────────────────────────────────────
+# Snake drawing geometry.
 PUFFS = [
     ( 0,  0, 18),
     (-7, -5, 14),
@@ -103,10 +72,10 @@ PUFFS = [
 ]
 NECK_W = 20
 
-# ── Cheer bubbles ─────────────────────────────────────────────────────────────
+# Floating cheer bubbles.
 BUBBLE_LIFETIME_MS = 4000
 
-# ── Spectator emoji buttons ───────────────────────────────────────────────────
+# Quick emoji buttons for spectators.
 QUICK_EMOJIS = ["👏", "❤️", "💀", "🔥", "😢"]
 BACKGROUND_MUSIC_PATH = os.path.join("assets", "game.mp3")
 GAME_WON_SOUND_PATH = os.path.join("assets", "gamewonsoundeffect.mp3")
@@ -119,11 +88,7 @@ HIT_SOUND_PATH = os.path.join("assets", "hit_sound.mp3")
 _friction_sound = None
 
 
-# =============================================================================
-# LAYOUT HELPER  — bug 3 & 6 fix
-# Single source of truth for the spectator input rect.
-# Used identically in draw_sidebar() AND the event handler.
-# =============================================================================
+# This helper keeps the spectator input box position in one place so drawing and click handling always use the same rectangle.
 
 def _spectator_input_rect():
     INPUT_H    = 36
@@ -133,10 +98,7 @@ def _spectator_input_rect():
     INP_Y      = EMOJI_Y + EMOJI_H + 4
     return pygame.Rect(SIDEBAR_X + 8, INP_Y, SIDEBAR_W - 16, INPUT_H)
 
-
-# =============================================================================
-# ASSET LOADING
-# =============================================================================
+# ──── ASSET LOADING ────────────────────────────────────────────────────
 
 def _load_img(path, max_px=None, keep_alpha=True):
     if not os.path.exists(path):
@@ -381,7 +343,7 @@ def load_assets():
 
     # ── Border bricks ─────────────────────────────────────────────────────────
     # Pre-tile four border strips to exact pixel dimensions at load time.
-    # draw_border() then does four blits — no per-frame math, no gaps.
+    # draw_border() then loads them after being already prepared
 
     def _tile_surf(img, target_w, target_h):
         """Fill a Surface of exactly target_w × target_h by tiling img."""
@@ -426,7 +388,7 @@ def load_assets():
         s.fill(SKY_BLUE)
         a["bg"] = s
 
-    # ── Shield icon (replaces VS text in HUD) ────────────────────────────────
+    # ── Shield icon in HUD ────────────────────────────────
     shield = _load_img(os.path.join("assets", "shield.png"))
     if shield:
         a["shield"] = pygame.transform.smoothscale(shield, (36, 36))
@@ -474,7 +436,7 @@ def _darker(color, factor=0.55):
     )
 
 
-def _lerp_pos(prev_grid, curr_grid, t):
+def _lerp_pos(prev_grid, curr_grid, t): #interpolation, smoothly calculating position between 2 points instead of making snake directly jump between points
     px, py = _tile_center(prev_grid[0], prev_grid[1])
     cx, cy = _tile_center(curr_grid[0], curr_grid[1])
     return (px + (cx - px) * t, py + (cy - py) * t)
@@ -492,7 +454,7 @@ def _gradient_color(index, total, base_color):
     )
 
 
-def _infer_direction(snake):
+def _infer_direction(snake):  #needs to know which direction snake is facing before drawing the head, eyes and emojis in specific
     if len(snake) < 2:
         return (1, 0)
     dx = snake[0][0] - snake[1][0]
@@ -589,7 +551,7 @@ def _draw_robot_eyes(surface, center, direction):
 
 
 def _draw_emoji_head(surface, center, emoji, fonts):
-    # bug 8 fix — uses pre-loaded font, no SysFont call per frame
+    # Use the pre-created font so we are not building fonts every frame.
     lbl = fonts["emoji"].render(emoji, True, WHITE)
     cx, cy = int(center[0]), int(center[1])
     surface.blit(lbl, (cx - lbl.get_width()//2, cy - lbl.get_height()//2))
@@ -622,9 +584,9 @@ def _draw_avatar(surface, cx, cy, r, color, head_style, head_emoji, fonts):
             pygame.draw.circle(surface, BLACK, (ex-1, cy-2), max(1, er-1))
 
 
-# =============================================================================
-# BOARD / OBSTACLES / PIES
-# =============================================================================
+
+# BOARD / OBSTACLES / PIES 
+
 
 def draw_board(surface, assets):
     for row in range(GRID_ROWS):
@@ -652,9 +614,8 @@ def draw_obstacles(surface, assets, obstacles):
         surface.blit(img, img.get_rect(center=(cx, cy)))
 
 
-# =============================================================================
+
 # SUDDEN DEATH RENDERING
-# =============================================================================
 
 def draw_fire_tiles(surface, assets, fire_tiles):
     """
@@ -667,8 +628,7 @@ def draw_fire_tiles(surface, assets, fire_tiles):
       A sine wave driven by pygame.time.get_ticks() moves the size between
       FIREBALL_MIN_PX and FIREBALL_MAX_PX. math.sin gives a perfectly smooth
       [-1, 1] oscillation; we remap it to [0, 1] and lerp between the two sizes.
-      Each tile gets its own phase offset based on its position so they don't
-      all pulse in lockstep — gives a natural, lively look.
+      Fire tiles do not grow and shrink at the same time 
     """
     FIREBALL_MIN_PX = 38   # smallest the fireball shrinks to
     FIREBALL_MAX_PX = 52   # largest it grows to
@@ -694,7 +654,7 @@ def draw_fire_tiles(surface, assets, fire_tiles):
             # Each tile gets a unique phase so they pulse independently.
             # (col * 3 + row * 7) is a cheap hash — prime multipliers spread phases well.
             phase = (col * 3 + row * 7) * 0.4
-            # sin oscillates -1..1 → remap to 0..1
+            # sin oscillates -1-1 → remap to 0-1
             t     = (math.sin(now_s * PULSE_SPEED * math.tau + phase) + 1.0) / 2.0
             size  = int(FIREBALL_MIN_PX + (FIREBALL_MAX_PX - FIREBALL_MIN_PX) * t)
 
@@ -743,7 +703,7 @@ def draw_snake(surface, snake, prev_snake, move_progress,
                direction_name=None):
     """
     Draw one snake with smooth interpolation between server ticks.
-    move_progress: (now − last_state_time) / SNAKE_MOVE_INTERVAL_MS, clamped 0..1
+    move_progress: (now - last_state_time) / SNAKE_MOVE_INTERVAL_MS, clamped 0-1
     invincible: player["invincible"] from GAME_STATE — flashes the snake
     """
     if not snake:
@@ -781,17 +741,16 @@ def draw_snake(surface, snake, prev_snake, move_progress,
                 _draw_classic_eyes(surface, centers[0], direction)
 
 
-# =============================================================================
 # HUD  (top strip)
-# =============================================================================
+
 
 def _draw_empty_cheers_state(surface, panel_rect, fonts, assets):
-    """Shows cheerful.png centered in the empty sidebar area with text below."""
+    """Draw the empty sidebar state when there are no cheers yet."""
     cx = panel_rect.centerx
     img = assets.get("cheerful")
 
     if img:
-        # Scale to fit nicely — max 100px tall
+        # Scale the image so it fits comfortably in the panel.
         iw, ih = img.get_size()
         scale  = min(100 / ih, (panel_rect.width - 20) / iw)
         nw, nh = int(iw * scale), int(ih * scale)
@@ -800,7 +759,7 @@ def _draw_empty_cheers_state(surface, panel_rect, fonts, assets):
         surface.blit(scaled, (cx - nw // 2, img_y))
         text_y = img_y + nh + 14
     else:
-        # Fallback: simple smiley circle if image missing
+        # Fallback if the image is missing.
         cy = panel_rect.y + panel_rect.height // 2 - 20
         pygame.draw.circle(surface, (255, 220, 75), (cx, cy), 34)
         pygame.draw.circle(surface, (200, 160, 35), (cx, cy), 34, 3)
@@ -821,9 +780,8 @@ def _draw_empty_cheers_state(surface, panel_rect, fonts, assets):
 def draw_hud(surface, left_data, right_data, time_left, fonts, my_name, mode, assets,
              sudden_death=False):
     """
-    Floating rounded HUD card with yellow timer badge.
-    Card: y=8 to y=86 — bricks start at y=90, so background is visible in the gap.
-    During sudden death the timer badge pulses red.
+    Draw the top HUD with both players and the timer.
+    During sudden death, the timer badge pulses red.
     """
     cx_mid = BOARD_X + BOARD_W // 2   # 424
 
@@ -900,8 +858,7 @@ def draw_hud(surface, left_data, right_data, time_left, fonts, my_name, mode, as
                        AVA_CY - rn.get_height()//2))
 
     # ── Health bars ────────────────────────────────────────────────────────────
-    # Left bar fills from card-left to badge-left (minus gap).
-    # Right bar fills from badge-right (plus gap) to card-right.
+    # Health bars sit on both sides of the timer.
     BAR_Y = CARD_Y + CARD_H - 25    # 61
     BAR_H = 16
 
@@ -941,13 +898,11 @@ def _draw_health_bar(surface, x, y, w, h, health, color, right_aligned=False):
 def draw_sidebar(surface, cheer_msgs, spectator_count,
                  mode, input_text, input_active, fonts, assets, sidebar_bubbles):
     """
-    Cheer messages visible for everyone.
-    Spectator mode adds emoji buttons + text input at the bottom.
-
-    bug 6 fix — returns {"emoji_rects": dict, "input_rect": Rect|None}
-    so the event handler uses the exact same rect that was drawn.
+    Draw the sidebar with cheer messages.
+    Spectators also get emoji buttons and a text input at the bottom.
+    Returns the button rects and input rect for event handling.
     """
-    # Floating rounded semi-transparent card — 8px margin so background peeks through
+    # Rounded sidebar card with a little space around it.
     panel_surf = pygame.Surface((SIDEBAR_W - 16, WINDOW_H - 16), pygame.SRCALPHA)
     pygame.draw.rect(panel_surf, (236, 249, 244, 220),
                      (0, 0, SIDEBAR_W - 16, WINDOW_H - 16), border_radius=20)
@@ -978,12 +933,12 @@ def draw_sidebar(surface, cheer_msgs, spectator_count,
     MSG_BOT    = WINDOW_H - BOTTOM_H - BTN_AREA_H - 6
     MSG_W      = SIDEBAR_W - 16
 
-    # Empty state
+    # Empty state.
     if not cheer_msgs:
         msg_area = pygame.Rect(SIDEBAR_X + 8, MSG_TOP, MSG_W, MSG_BOT - MSG_TOP)
         _draw_empty_cheers_state(surface, msg_area, fonts, assets)
     else:
-        # Draw oldest messages at TOP, newest at BOTTOM — chronological order
+        # Show messages in normal reading order, from oldest to newest.
         clip_h = MSG_BOT - MSG_TOP
         clip   = pygame.Surface((MSG_W, clip_h), pygame.SRCALPHA)
         clip.fill((0, 0, 0, 0))
@@ -995,8 +950,7 @@ def draw_sidebar(surface, cheer_msgs, spectator_count,
             sender_h = fonts["small_bold"].get_height() + 2
             return sender_h + len(lines) * (fonts["emoji_chat"].get_height() + 2) + 16 + 6
 
-        # Find which messages fit — always oldest→newest top→bottom
-        # When overflow: drop oldest until newest fit from top
+        # Keep only the messages that fit in the visible area.
         recent = cheer_msgs[-60:]
         fitting = []
         total = 0
@@ -1016,7 +970,7 @@ def draw_sidebar(surface, cheer_msgs, spectator_count,
             system = msg.get("system", False)
 
             if system:
-                # Styled pill — use emoji font so icons render
+                # System messages are shown as centered pills.
                 lbl  = fonts["emoji_chat"].render(text, True, TEXT_MID)
                 pill_w = min(lbl.get_width() + 20, MSG_W - 4)
                 pill_h = lbl.get_height() + 8
@@ -1032,7 +986,7 @@ def draw_sidebar(surface, cheer_msgs, spectator_count,
                 sender_h  = fonts["small_bold"].get_height() + 2
                 block_h   = sender_h + len(lines) * (fonts["emoji_chat"].get_height() + 2) + 16
 
-                # Card with teal left accent bar
+                # Regular chat messages use a card with a teal accent bar.
                 pygame.draw.rect(clip, (245, 252, 249),
                                  (0, y, MSG_W, block_h), border_radius=9)
                 pygame.draw.rect(clip, CARD_BORDER,
@@ -1040,11 +994,11 @@ def draw_sidebar(surface, cheer_msgs, spectator_count,
                 pygame.draw.rect(clip, TEAL,
                                  (0, y, 4, block_h), border_radius=2)
 
-                # Sender name in teal
+                # Sender name.
                 sn = fonts["small_bold"].render(sender, True, TEAL_DARK)
                 clip.blit(sn, (10, y + 4))
 
-                # Message text — emoji_chat font renders emojis correctly
+                # Message body.
                 ty = y + 4 + sn.get_height() + 2
                 for line in lines:
                     ls = fonts["emoji_chat"].render(line, True, TEXT_DARK)
@@ -1056,7 +1010,7 @@ def draw_sidebar(surface, cheer_msgs, spectator_count,
         surface.blit(clip, (SIDEBAR_X + 8, MSG_TOP))
 
     if mode != "spectator":
-        # Players: read-only sidebar, no input
+        # Players can read cheers but cannot type here.
         draw_sidebar_bubbles(surface, sidebar_bubbles, fonts)
         return {"emoji_rects": {}, "input_rect": None}
 
@@ -1076,7 +1030,7 @@ def draw_sidebar(surface, cheer_msgs, spectator_count,
                            br.centery - lbl.get_height()//2))
         emoji_rects[em] = br
 
-    # Text input
+    # Text input.
     inp_r = _spectator_input_rect()
     pygame.draw.rect(surface, INPUT_ACT if input_active else INPUT_BG,
                      inp_r, border_radius=8)
@@ -1091,7 +1045,7 @@ def draw_sidebar(surface, cheer_msgs, spectator_count,
         pygame.draw.line(surface, TEXT_DARK,
                          (cur_x, inp_r.y + 6), (cur_x, inp_r.bottom - 6), 1)
 
-    # Floating emoji reactions drawn last (on top of everything in sidebar)
+    # Draw floating reactions last so they stay on top.
     draw_sidebar_bubbles(surface, sidebar_bubbles, fonts)
 
     return {"emoji_rects": emoji_rects, "input_rect": inp_r}
@@ -1103,8 +1057,8 @@ def draw_sidebar(surface, cheer_msgs, spectator_count,
 
 def draw_bottom_bar(surface, spectator_count, fonts, mode="player"):
     """
-    Bottom status strip.  For spectators, also draws a Leave button on the right.
-    Returns the Leave button Rect (spectator mode) or None (player mode).
+    Draw the bottom status bar.
+    In spectator mode, this also draws the Leave button and returns its rect.
     """
     y = WINDOW_H - BOTTOM_H
     rect = pygame.Rect(0, y, SIDEBAR_X, BOTTOM_H)
@@ -1225,7 +1179,7 @@ def _run_game_over(surface, clock, fonts, screenshot,
     Blocking game-over screen.
 
     Each frame:
-      1. Blit the frozen screenshot (board paused exactly as it was)
+      1. board paused exactly as it was
       2. Blit a dark semi-transparent tint
       3. Draw the overlay panel on top
 
@@ -1393,9 +1347,7 @@ def _run_game_over(surface, clock, fonts, screenshot,
         clock.tick(FPS)
 
 
-# =============================================================================
 # RECEIVER THREAD  (same pattern as lobby.py)
-# =============================================================================
 
 def _start_receiver(sock, q):
     def _run():
@@ -1411,9 +1363,8 @@ def _start_receiver(sock, q):
     threading.Thread(target=_run, daemon=True, name="game-rx").start()
 
 
-# =============================================================================
 # MAIN ENTRY POINT
-# =============================================================================
+
 
 def run_game_screen(sock, player_info, mode, assets, msg_q):
     """
@@ -1432,7 +1383,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
     clock  = pygame.time.Clock()
     music_started = _start_background_music()
 
-    # bug 8 fix — all fonts created once here, passed down into helpers
+    # Create the fonts once here and pass them down where needed.
     fonts = {
         "result":     pygame.font.SysFont("comicsansms", 36, bold=True),  # game over headline
         "timer":      pygame.font.SysFont("impact",      28, bold=True),
@@ -1452,7 +1403,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
 
     my_name = player_info["username"]
 
-    # Custom key bindings — inverted for O(1) lookup in event handler
+    # Flip the key mapping so pressed keys can be checked quickly.
     key_map    = player_info.get("keys", {
         "UP":    pygame.K_UP,
         "DOWN":  pygame.K_DOWN,
@@ -1466,8 +1417,8 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
     prev_state      = None
     last_state_time = 0
     obstacles       = None
-    fire_tiles      = []    # cached once when SD triggers — never changes after
-    sudden_death    = False  # mirrors game.sudden_death for rendering
+    fire_tiles      = []    # filled once sudden death starts
+    sudden_death    = False  # copied from the server state for rendering
 
     cheer_msgs      = []
     bubbles         = []
@@ -1479,7 +1430,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
     sidebar_out = {"emoji_rects": {}, "input_rect": None}
 
     result   = "lobby"
-    leave_btn = None   # spectator Leave button rect — set each frame
+    leave_btn = None   # spectator Leave button rect
     running = True
     while running:
         clock.tick(FPS)
@@ -1510,10 +1461,10 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                         _play_hit_sound()
                 if obstacles is None and state:
                     obstacles = state["obstacles"]
-                # Fire tiles are fixed once SD triggers — cache on first non-empty value
+                # Fire tiles do not change after sudden death starts, so we can cache them.
                 if not fire_tiles and state and state.get("fire_tiles"):
                     fire_tiles = state["fire_tiles"]
-                # Always mirror the SD flag so HUD / banner update live
+                # Keep the sudden-death flag in sync so the HUD updates right away.
                 if state:
                     sudden_death = state.get("sudden_death", False)
 
@@ -1545,7 +1496,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                     name1, name2 = p1["username"], p2["username"]
                     go_h1, go_h2 = h1, h2
 
-                # Take screenshot of the current frame — board frozen at this moment
+                # Freeze the current frame so it can be used behind the game-over panel.
                 screenshot = screen.copy()
 
                 go_result = _run_game_over(
@@ -1556,7 +1507,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                 if go_result == "rematch":
                     if music_started:
                         music_started = _start_background_music()
-                    # Reset game state — new GAME_STATE messages will arrive
+                    # Reset local state before the next match starts.
                     state           = None
                     prev_state      = None
                     last_state_time = 0
@@ -1568,13 +1519,13 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                 else:
                     result  = go_result   # "lobby" or "quit"
                     running = False
-                break   # stop draining — PLAYERS_LIST stays in queue for lobby
+                break   # stop here so lobby-related messages stay queued if needed
 
             elif hdr == "CHAT":
                 parts  = body.split(":", 1)
                 sender = parts[0] if len(parts) == 2 else "?"
                 text   = parts[1] if len(parts) == 2 else body
-                # Emoji reactions: sidebar bubble only, don't flood panel
+                # Quick emoji reactions float in the sidebar instead of adding chat clutter.
                 if text.strip() in QUICK_EMOJIS:
                     spawn_sidebar_bubble(sidebar_bubbles, text.strip())
                 else:
@@ -1589,9 +1540,8 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                 running = False
 
             else:
-                # REMATCH_FROM, REMATCH_QUEUED, REMATCH_START, REMATCH_DECLINED
-                # can arrive while the main loop is still draining pre-GAME_OVER
-                # messages. Put them back so _run_game_over can process them.
+                # Some rematch messages may arrive early. Put them back so the
+                # game-over screen can handle them.
                 msg_q.put((hdr, body))
 
         # ── Events ────────────────────────────────────────────────────────────
@@ -1602,7 +1552,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mx, my = event.pos
                 if mode == "spectator":
-                    # Leave button — return to lobby
+                    # Spectators can leave the match from here.
                     if leave_btn and leave_btn.collidepoint(mx, my):
                         _play_button_sound()
                         protocol.send(sock, protocol.send_leave_watch())
@@ -1627,7 +1577,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                         msg = input_text.strip()
                         if msg:
                             protocol.send(sock, protocol.send_chat(msg))
-                            # Add locally — server doesn't echo back to sender
+                            # Add it locally because the server does not echo it back.
                             cheer_msgs.append({"sender": my_name, "text": msg, "system": False})
                             input_text = ""
                     elif event.key == pygame.K_BACKSPACE:
@@ -1641,8 +1591,8 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
                         _play_friction_sound()
 
         # ── Interpolation ─────────────────────────────────────────────────────
-        # During sudden death the server ticks twice as often, so the effective
-        # interval is halved — the lerp must match or the snake looks laggy.
+        # During sudden death the updates come faster, so interpolation needs
+        # to use that shorter interval too.
         _tick_interval = (SNAKE_MOVE_INTERVAL_MS / SUDDEN_DEATH_SPEED_MULT
                           if sudden_death else SNAKE_MOVE_INTERVAL_MS)
         if last_state_time > 0:
@@ -1656,7 +1606,7 @@ def run_game_screen(sock, player_info, mode, assets, msg_q):
         screen.blit(assets["bg"], (0, 0))
         draw_board(screen, assets)
 
-        # Fire tiles sit on top of grass, underneath obstacles and snakes
+        # Fire tiles are drawn above the grass but below obstacles and snakes.
         if fire_tiles:
             draw_fire_tiles(screen, assets, fire_tiles)
 

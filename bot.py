@@ -1,24 +1,12 @@
-# =============================================================================
-# bot.py — Πthon Arena
-# =============================================================================
-# Greedy bot with flood-fill survivability + direction commitment.
-#
-# What makes it feel human:
-#   • Thinks every tick (no blind coasting)
-#   • Commits to a direction — gets a continuity bonus for keeping the same
-#     heading, so it moves in purposeful straight lines toward pies and only
-#     turns when there's a real reason (danger, better pie, fire avoidance)
-#   • Low mistake rate — bad moves are rare, not constant
-#   • Flood fill prevents getting cornered by fire tiles
-# =============================================================================
+# Each turn, the bot scores its possible next moves and picks the best one.
+# It weighs up staying safe, reaching pies before it starves, and hunting a
+# weakened enemy while trying to move in straight lines rather than zigzag.
 
 import random
 from collections import deque
 from constants import GRID_COLS, GRID_ROWS
 
-# =============================================================================
-# BOT IDENTITY
-# =============================================================================
+# Bot identity.
 
 BOT_NAME = "PyBot"
 BOT_INFO = {
@@ -27,42 +15,36 @@ BOT_INFO = {
     "head_emoji": None,
 }
 
-# =============================================================================
-# TUNING CONSTANTS
-# =============================================================================
-
-# Think every tick so movement is always intentional, never blind coasting
+# How often the bot makes a decision.
 THINK_EVERY = 1
 
-# Low mistake rate — the bot plays cleanly, just not perfectly
-MISTAKE_RATE    = 0.08   # 8% chance of picking 2nd-best (normal play)
-MISTAKE_RATE_SD = 0.14   # slightly higher in sudden death
+# Small chance of choosing the second-best move.
+MISTAKE_RATE    = 0.12   # normal play
+MISTAKE_RATE_SD = 0.16   # sudden death
 
-# HP thresholds
+# Health values that affect the bot's behavior.
 LOW_HP_THRESH  = 40
 AGGRO_HP_SELF  = 65
 AGGRO_HP_ENEMY = 45
 
-# Flood fill cap
+# Values used to estimate how much free space a move leads to.
 FLOOD_CAP      = 40
 TRAP_THRESHOLD = 6
 
-# Scoring weights
-W_PIE_DIST    = 10    # per tile to nearest pie (main objective)
-W_PIE_URGENT  = 6     # extra per tile when HP is low
-W_CONTINUE    = 15    # bonus for keeping the current direction (commitment)
-W_FLOOD       = 2     # per reachable free cell (open space is good)
-W_FLOOD_TRAP  = 200   # flat penalty for pockets with < TRAP_THRESHOLD cells
-W_NEAR_FIRE   = 8     # per adjacent fire tile
-W_AGGRO       = 3     # per tile to enemy when aggressive
+# Weights used when scoring each move.
+W_PIE_DIST    = 10    # penalty for being farther from the nearest pie
+W_PIE_URGENT  = 6     # extra pie penalty when health is low
+W_CONTINUE    = 15    # reward for continuing in the same direction
+W_FLOOD       = 2     # reward for moves with more open space
+W_FLOOD_TRAP  = 200   # big penalty for moves that lead into small trapped areas
+W_NEAR_FIRE   = 8     # penalty for being close to fire
+W_AGGRO       = 3     # reward for moving closer to the enemy when attacking
 
 _DIRS     = [(0, -1), (0, 1), (-1, 0), (1, 0)]
 _DIR_NAME = {(0,-1): "UP", (0,1): "DOWN", (-1,0): "LEFT", (1,0): "RIGHT"}
 
 
-# =============================================================================
-# BOT CLASS
-# =============================================================================
+# Main bot class.
 
 class GreedyBot:
     """One instance per game session."""
@@ -71,7 +53,7 @@ class GreedyBot:
         self._bot       = bot_username
         self._human     = human_username
         self._tick      = 0
-        self._last_dir  = None   # tracks current heading for continuity bonus
+        self._last_dir  = None   # remembers the last direction to reduce zigzagging
 
     def decide(self, game):
         self._tick += 1
@@ -146,7 +128,7 @@ class GreedyBot:
         self._last_dir = direction
         return _DIR_NAME[direction]
 
-    # =========================================================================
+    ########################################################################################3
 
     def _is_wall(self, col, row):
         return col < 0 or col >= GRID_COLS or row < 0 or row >= GRID_ROWS

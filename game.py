@@ -1,15 +1,6 @@
-# =============================================================================
-# game.py — Πthon Arena
-# =============================================================================
-# Pure game logic — no sockets, no pygame, no rendering.
-#
-# The server creates one GameState instance per match and calls:
-#   game = GameState(p1_info, p2_info)
-#   game.set_direction(username, "UP")   ← called when MOVE received
-#   game.tick()                          ← called every SNAKE_MOVE_INTERVAL_MS
-#   state = game.get_state()             ← called after tick to broadcast
-#   over, winner = game.check_game_over()
-# =============================================================================
+# This file contains the main game logic for a single match.
+# It handles snake movement, health, collisions, pies, sudden death, and deciding when the game ends.
+# The server updates the game by calling GameState.tick() once each movement interval.
 
 import random
 import time
@@ -24,9 +15,8 @@ from constants import (
     FIRE_DAMAGE,
 )
 
-# =============================================================================
+
 # SERVER-SIDE CONSTANTS
-# =============================================================================
 
 # ── Snake ─────────────────────────────────────────────────────────────────────
 # Head first, then body segments
@@ -99,9 +89,9 @@ OBSTACLES = [
 GAME_DURATION_S = 120
 
 
-# =============================================================================
-# HELPERS
-# =============================================================================
+
+# ── HELPERS ───────────────────────────────────────────────────────────────
+
 
 def _now_ms():
     """Current time in milliseconds."""
@@ -117,9 +107,9 @@ def _clamp(val, lo, hi):
     return max(lo, min(hi, val))
 
 
-# =============================================================================
-# PLAYER STATE
-# =============================================================================
+
+# ──── PLAYER STATE ────────────────────────────────
+
 
 class Player:
     """Holds everything about one snake player."""
@@ -227,9 +217,8 @@ class Player:
         }
 
 
-# =============================================================================
-# GAME STATE
-# =============================================================================
+# ──── GAME STATE ────────────────────────────────────────────────────────────
+
 
 class GameState:
     """
