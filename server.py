@@ -11,64 +11,31 @@ from constants import (
 )
 from bot import GreedyBot, BOT_NAME, BOT_INFO
 
-# =============================================================================
-# SERVER — Πthon Arena
-#
-# STEP 1 (done): Connections + Usernames + Player List
-# STEP 2 (done): Player Status + Challenge System + Spectators
-# STEP 3 (done): Game Logic — game loop, broadcasting, MOVE routing
-#
-# How to run:
-#   python server.py 5555
-# =============================================================================
-
-
-# =============================================================================
-# GLOBAL STATE
-# =============================================================================
-
-# Key = username (string)
-# Value = {
-#     "socket":     socket object,
-#     "color":      [r, g, b],
-#     "head_style": "classic" | "emoji",
-#     "head_emoji": str | None,
-#     "address":    (ip, port),
-#     "status":     "lobby" | "in_game" | "spectating"
-# }
+#This file handles the server of our game
+#Its role is to accept client connections, store online players, handles challenges,
+#starts matches, updates the game, manages spectators, and supports rematches.
+#The below variables help us keep track of the current state of the server
 connected_players = {}
 
-# Lock — always acquire before reading/writing connected_players or active_game
+#since many client threads may be accessing at the same time, we use the below variable
 players_lock = threading.Lock()
 
-# Key   = username who RECEIVED the challenge
-# Value = username who SENT the challenge
+#the below variable stores the requests that have not been accepted or declined yet
 pending_challenges = {}
 
-# The one active game session (None when no game running).
-# Format when active:
-#   {
-#       "player1":    username (challenger),
-#       "player2":    username (accepter),
-#       "spectators": [username, ...],
-#       "game":       GameState instance
-#   }
+#the below variable stores the current active game
 active_game = None
 
-# Rematch tracking
-pending_rematches = set()   # usernames who requested a rematch
-last_game_pair    = {}      # {username: opponent} — set when each game ends
+# stores usernames of players who requested a rematch after a game ended
+pending_rematches = set()   
+last_game_pair    = {}      
 
-
-# =============================================================================
 # BROADCAST HELPERS
-# =============================================================================
+
 
 def broadcast_player_list():
-    """
-    Send the updated player list to every connected client.
-    Snapshots data under lock, sends outside lock.
-    """
+    #this function sends the updated list of online players to every connected client
+    #It is used whenever the lobby changes, such as when a player joins, disconnects, starts a game, becomes a spectator, or returns to the lobby
     with players_lock:
         player_data = []
         sockets     = []
@@ -93,10 +60,7 @@ def broadcast_player_list():
 
 
 def _send_to_all(recipients, message):
-    """
-    Send one message to a list of (username, socket) tuples.
-    Catches and logs errors per recipient — never raises.
-    """
+   #this function sends the same message to multiple users 
     for uname, sock in recipients:
         try:
             protocol.send(sock, message)
@@ -104,31 +68,14 @@ def _send_to_all(recipients, message):
             print(f"[ERROR] send to {uname}: {e}")
 
 
-# =============================================================================
+
 # GAME LOOP
 # Runs in its own daemon thread for the duration of one match.
-# =============================================================================
+
 
 def game_loop():
-    """
-    Drives the game forward every SNAKE_MOVE_INTERVAL_MS milliseconds.
-
-    Each iteration:
-      1. Acquire lock — check active_game still exists — snapshot
-         game object, player names, spectator list, and ALL sockets.
-      2. Release lock.
-      3. Tick the game (pure logic, no network).
-      4. Build GAME_STATE message.
-      5. Send GAME_STATE to players + spectators outside the lock.
-      6. If game is over:
-           a. Send GAME_OVER to players + spectators.
-           b. Acquire lock — reset statuses — clear active_game.
-           c. Broadcast updated player list.
-           d. Exit thread.
-
-    Exits immediately if active_game becomes None
-    (a player disconnected — remove_player already handled cleanup).
-    """
+   #this function keeps the game moving forward
+   #It sends updated game states to clients, handles the bot if the client is playing against the Ai snake, and ends the match when the game is over
     global active_game
 
     last_move_time = time.monotonic()
@@ -138,20 +85,19 @@ def game_loop():
         now = time.monotonic()
         move_interval = SNAKE_MOVE_INTERVAL_MS / 1000
         send_interval = GAME_STATE_SEND_INTERVAL_MS / 1000
-        # ── Step 1: Snapshot under lock ───────────────────────────────────────
+        # Safely copy the current game information
         with players_lock:
             if active_game is None:
-                # A player disconnected mid-game — remove_player cleaned up
+                # If no game exists anymore, stop the loop
                 break
-
+            #Get the active gamestate object and player names 
             game       = active_game["game"]
             p1_name    = active_game["player1"]
             p2_name    = active_game["player2"]
             bot_instance = active_game.get("bot")
-            spectators = list(active_game["spectators"])   # copy — safe
+            spectators = list(active_game["spectators"])   # copy spectator list
 
-            # Snapshot (username, socket) for every recipient.
-            # We snapshot sockets here so we never hold the lock during sends.
+            # Store all clients that should receive game updates 
             recipients = []
             for uname in [p1_name, p2_name] + spectators:
                 if uname in connected_players:
@@ -159,24 +105,25 @@ def game_loop():
                         (uname, connected_players[uname]["socket"])
                     )
 
-        # ── Step 2: Bot move (before tick so direction is buffered) ──────────
+        # If sudden death is active, make the snakes move faster 
         if game.sudden_death:
             move_interval /= SUDDEN_DEATH_SPEED_MULT
 
-        did_tick = False
+        did_tick = False #tracks whether the game actually moved during this loop cycle
         if now - last_move_time >= move_interval and bot_instance is not None:
             bot_dir = bot_instance.decide(game)
             if bot_dir:
                 game.set_direction(BOT_NAME, bot_dir)
 
-        # ── Step 3 (was 2): Tick (no lock needed — pure Python logic) ───
+        # move the game forward only when enough time has passed
         if now - last_move_time >= move_interval:
             game.tick()
             last_move_time = now
             did_tick = True
 
-        # ── Step 4: Build GAME_STATE ──────────────────────────────────────────
+        # get the latest game state after movement or for periodic updates
         state     = game.get_state()
+        #send game state if the game moved or enough time passed since last update
         if did_tick or now - last_send_time >= send_interval:
             state_msg = protocol.game_state(
                 state["player1"],
@@ -189,11 +136,11 @@ def game_loop():
                 state["move_id"],
             )
 
-        # ── Step 5: Broadcast GAME_STATE to players + spectators ──────────────
+        # send the updated game state to both players and all spectators
             _send_to_all(recipients, state_msg)
             last_send_time = now
 
-        # ── Step 6: Check game over ───────────────────────────────────────────
+        # if no movement happened, wait briefly and continue checking
         if not did_tick:
             time.sleep(0.005)
             continue
@@ -201,25 +148,25 @@ def game_loop():
         over, winner = game.check_game_over()
         if not over:
             time.sleep(0.005)
-            continue   # normal tick — sleep and go again
+            continue   
 
-        # ── Step 7: Game is over ──────────────────────────────────────────────
+        # get final health values for the game-over message
         h1       = state["player1"]["health"]
         h2       = state["player2"]["health"]
         over_msg = protocol.game_over(winner, h1, h2)
 
-        # 6a. Send GAME_OVER to players + spectators
+        # send the game-over result to players and spectators
         _send_to_all(recipients, over_msg)
         print(f"[GAME OVER] Winner: {winner} | "
               f"{p1_name}: {h1} HP | {p2_name}: {h2} HP")
 
-        # 6b. Clean up under lock
+        # clean up the game safely
         with players_lock:
             if active_game is not None:
-                # Record who played each other — enables rematch
+                # save the last match pair so rematch can work
                 last_game_pair[p1_name] = p2_name
                 last_game_pair[p2_name] = p1_name
-                # Return both players to lobby
+                # return both players to the lobby 
                 for uname in [p1_name, p2_name]:
                     if uname in connected_players:
                         connected_players[uname]["status"] = "lobby"
@@ -229,21 +176,18 @@ def game_loop():
                         connected_players[uname]["status"] = "lobby"
                 active_game = None
 
-        # 6c. Lobby screens see everyone is back
+        # update everyone's lobby player list after the match ends 
         broadcast_player_list()
-        break   # thread exits cleanly
+        break   # exit the game loop 
 
 
-# =============================================================================
+
 # BOT GAME
-# =============================================================================
+
 
 def handle_play_bot(username):
-    """
-    Start an immediate solo game against the bot.
-    No challenge/accept handshake needed — game begins instantly.
-    The bot is NOT added to connected_players (it has no socket).
-    """
+    #startsa game between a player and the AI snake 
+    #here we have a different challenge system because the bot does not need to accept or decline the game. 
     global active_game
 
     with players_lock:
@@ -269,11 +213,11 @@ def handle_play_bot(username):
             "player2":    BOT_NAME,
             "spectators": [],
             "game":       game_obj,
-            "bot":        GreedyBot(BOT_NAME, username),  # bot instance
+            "bot":        GreedyBot(BOT_NAME, username), 
         }
         print(f"[BOT GAME] {username} vs {BOT_NAME}")
 
-    # Notify the human player — same messages as a normal game start
+    
     sock = connected_players[username]["socket"]
     try:
         protocol.send(sock, protocol.challenge_accepted(BOT_NAME))
@@ -285,15 +229,13 @@ def handle_play_bot(username):
     threading.Thread(target=game_loop, daemon=True).start()
 
 
-# =============================================================================
+
 # CHALLENGE SYSTEM
-# =============================================================================
+
 
 def handle_challenge(challenger, opponent):
-    """
-    Challenger wants to start a game against opponent.
-    Validates both are in lobby, records challenge, notifies opponent.
-    """
+    #this function handles the request between two players 
+    #this function checks if both players are available in the lobby, stores the pending challenge, and notifies the opponent
     with players_lock:
         if active_game is not None:
             protocol.send(connected_players[challenger]["socket"],
@@ -336,10 +278,10 @@ def handle_challenge(challenger, opponent):
 
 
 def handle_accept(accepter, challenger):
-    """
-    Accepter agrees to the challenge.
-    Creates the GameState, stores it in active_game, spawns game_loop thread.
-    """
+    #this function handles challenge acceptance
+    #When the accepter agrees to the challenge, this function creates
+    #the game, marks both players as in-game, starts the game loop,
+    #and notifies both players that the match is starting.
     global active_game
 
     with players_lock:
@@ -414,7 +356,8 @@ def handle_accept(accepter, challenger):
 
 
 def handle_decline(decliner, challenger):
-    """Decliner says no. Removes challenge and notifies challenger."""
+    #it handles challenge rejection. If the player declines the challenge 
+    #the pending request is removed and the callenger is notified that their request was rejected.
     with players_lock:
         if decliner not in pending_challenges:
             return
@@ -431,16 +374,15 @@ def handle_decline(decliner, challenger):
         print(f"[ERROR] decline notify to {challenger}: {e}")
 
 
-# =============================================================================
+
 # SPECTATOR SYSTEM
-# =============================================================================
+
 
 def handle_watch(username):
-    """
-    A lobby player wants to spectate the active game.
-    Adds them to active_game["spectators"].
-    The game_loop will start including them in broadcasts on the next tick.
-    """
+    #this function handles a player's request to watch the current active game
+    #The player must be in the lobby, and there must already be
+    #a match running. If both conditions are true, the player is added
+    #to the spectators list.
     global active_game
 
     with players_lock:
@@ -479,21 +421,19 @@ def handle_watch(username):
     broadcast_player_list()
 
 
-# =============================================================================
+
 # DISCONNECT CLEANUP
-# =============================================================================
+
 
 def remove_player(username):
-    """
-    Remove a player and clean up everything they were part of.
+   #Removes a player from the server and cleans up anything related to them.
 
-    Scenarios:
-      1. Lobby      → remove, broadcast
-      2. In a game  → opponent wins, GAME_OVER sent to opponent AND
-                      all spectators, everyone moved back to lobby
-      3. Spectating → removed from spectator list
-      4. Had challenges → removed
-    """
+    #This function handles different cases:
+    #1. If the player was in the lobby, they are simply removed.
+    #2. If they were playing a match, the opponent automatically wins.
+    #3. If they were spectating, they are removed from the spectators list.
+    #4. Any pending challenges or rematch requests involving them are deleted.
+    
     global active_game
 
     # These will be populated inside the lock, then used outside it
@@ -506,17 +446,17 @@ def remove_player(username):
 
         player_status = connected_players[username]["status"]
 
-        # ── Pending challenges ────────────────────────────────────────────────
+        # Pending challenges 
         if username in pending_challenges:
             del pending_challenges[username]
         to_remove = [k for k, v in pending_challenges.items() if v == username]
         for key in to_remove:
             del pending_challenges[key]
 
-        # ── Pending rematch ───────────────────────────────────────────────────
+        #Pending rematch 
         pending_rematches.discard(username)
 
-        # ── Was in a game ─────────────────────────────────────────────────────
+        # Was in a game 
         if player_status == "in_game" and active_game:
             opponent = None
             if active_game["player1"] == username:
@@ -561,25 +501,19 @@ def remove_player(username):
     broadcast_player_list()
 
 
-# =============================================================================
+
 # REMATCH SYSTEM
-# =============================================================================
+
 
 def handle_rematch(username):
-    """
-    Player wants to rematch their last opponent.
+    #Handles a rematch request after a game ends.
 
-    Flow:
-      First  player: added to pending_rematches →
-                     REMATCH_QUEUED sent to them (confirms server got it) +
-                     REMATCH_FROM sent to opponent (notifies them)
-      Second player: both in pending → game starts immediately →
-                     REMATCH_START sent to both
+    #If one player asks first, the request is saved and the opponent is notified.
+    #If the second player also asks for a rematch, the new game starts immediately.
 
-    Bot shortcut:
-      If the last opponent was the bot, skip the handshake entirely —
-      immediately create a fresh bot game and send REMATCH_START.
-    """
+    #Special case:
+    #If the last opponent was the bot, the rematch starts instantly
+    #without waiting for confirmation.
     global active_game
 
     with players_lock:
@@ -669,14 +603,10 @@ def handle_rematch(username):
 
 
 def handle_decline_rematch(username):
-    """
-    Player is leaving — cancel any rematch involvement and notify opponent.
-
-    Handles two cases:
-      1. This player had sent a REMATCH request (they are in pending_rematches)
-      2. The opponent had sent a REMATCH request to this player — opponent is
-         waiting, but this player is leaving without responding
-    """
+    #it handles rematch cancellation 
+   # This happens when a player leaves instead of accepting a rematch.
+   # The server removes any pending rematch request and notifies
+    #the opponent that the rematch was declined.
     notify_opponent = None
 
     with players_lock:
@@ -705,10 +635,10 @@ def handle_decline_rematch(username):
 
 
 def handle_leave_watch(username):
-    """
-    Spectator wants to stop watching and return to lobby.
-    Removes them from active_game["spectators"] and resets their status.
-    """
+    #Handles a spectator leaving the current game.
+
+    #The spectator is removed from the spectators list
+    #and their status changes back to lobby.
     with players_lock:
         if username not in connected_players:
             return
@@ -722,19 +652,15 @@ def handle_leave_watch(username):
     broadcast_player_list()
 
 
-# =============================================================================
 # CLIENT HANDLER
-# =============================================================================
+
 
 def handle_client(client_socket, client_address):
-    """
-    Handles one client connection in its own thread.
+    #it handles one connected client
 
-    Lifecycle:
-      1. Receive JOIN — validate username — store in connected_players
-      2. Loop: receive messages — route to handler
-      3. On disconnect: remove_player cleans everything up
-    """
+   # Each client runs in its own thread, so this function is responsible for
+   # receiving that client's messages, checking what type of message it is,
+    #and calling the correct handler.
     username = None
 
     try:
@@ -882,9 +808,9 @@ def handle_client(client_socket, client_address):
             pass
 
 
-# =============================================================================
+
 # SERVER STARTUP
-# =============================================================================
+
 
 def start_server(port):
     """Create listening socket and spawn a thread per client."""
@@ -913,9 +839,8 @@ def start_server(port):
         print("[SERVER] Stopped.")
 
 
-# =============================================================================
 # ENTRY POINT
-# =============================================================================
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
