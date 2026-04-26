@@ -11,6 +11,7 @@ from game_screen import run_game_screen, load_assets
 
 # Server connection settings
 SERVER_HOST = "10.169.12.107"
+#change to server IP or 127.0.0.0 in case of same-machine testing
 
 # Window settings
 WINDOW_WIDTH  = 800
