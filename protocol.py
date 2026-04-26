@@ -1,30 +1,10 @@
-# protocol.py
-# =============================================================================
-# This file is the "translator" for our multiplayer snake game.
-#
-# WHY DO WE NEED THIS?
-# Sockets can ONLY send plain text (strings). You can't send a Python list
-# or dictionary through a socket directly. So every time we want to send
-# data between the client and server, we need to:
-#   1. Convert it into a string  →  send it over the network
-#   2. Receive the string        →  convert it back into usable Python data
-#
-# HOW MESSAGES WORK:
-# Every message follows this format:  HEADER:body
-#   - HEADER tells you what KIND of message it is (like MOVE, CHALLENGE, etc.)
-#   - body carries the actual DATA (like "UP", "john", or a JSON string)
-#   - Example: "MOVE:UP" means "this is a MOVE message, and the direction is UP"
-#
-# This file is split into 4 sections:
-#   1. Socket helpers   (send and receive over the network)
-#   2. Client → Server  (messages the player's app sends)
-#   3. Server → Client  (messages the server sends back)
-#   4. Parsers          (functions that read and decode incoming messages)
-# =============================================================================
-
+#this file of the project acts as the communication between the client and the server
+#It converts the Python data like lists and dictionaries into text messages thats can be sent through sockets
+#Each message  follows the HEADER:body format
 import json
 
-# buffer dictionary 
+# In class we learnt how buffers store data in waiting, meaning it stores unfinished incoming messages for each socket.
+#Sometimes messages arrive in pieces, so we keep the partial data here until the full message is received
 _buffers = {}
 
 # =============================================================================
@@ -37,20 +17,13 @@ _buffers = {}
 
 
 def send(sock, message):
-    """
-    Send a message through a socket, with newline delimiter, then encodes to bytes.
-    Parameters:
-        sock:    the socket to send through
-        message: the string to send (e.g. "USERNAME_OK" or "MOVE:UP")
-    """
+    #we need this function to convert messages into bytes before sending to a socket
+    #Sockets can only send bytes not normal Python string
     sock.sendall((message + "\n").encode('utf-8'))
 
 def receive(sock):
-    """
-    Receive exactly ONE message from a socket.
-    Uses the newline delimiter to split messages properly,
-    even if multiple messages arrive in one recv() call.
-    """
+    #the function receives message from the socket
+    #It keeps reading data until it finds a full message ending with a newline
     # Get or create a buffer for this socket
     sock_id = id(sock)
     if sock_id not in _buffers:
@@ -76,23 +49,9 @@ def receive(sock):
 # =============================================================================
 
 def send_join(username, color, head_style="classic", head_emoji=None, chat_port=0):
-    """
-    Player wants to join the server with a username, snake color, head style,
-    and P2P chat port.
-
-    Parameters:
-        username:   string like "Lara"
-        color:      list like [0, 180, 50] (RGB values)
-        head_style: "classic" or "emoji"
-        head_emoji: string like "^.^" (only used when head_style == "emoji"), or None
-        chat_port:  the port this client is listening on for P2P chat connections.
-                    0 means chat is not available (e.g. spectator who skipped setup).
-
-    Returns:
-        Formatted message string like:
-        JOIN:{"username":"Lara","color":[0,180,50],"head_style":"emoji",
-              "head_emoji":"^.^","chat_port":49832}
-    """
+    #This function is used when a player connects to a server for the first time
+    #It collects information like username,snake,head style, emoji selection, and chat port.
+    #After that, it converts into JSON format and sends it as a JOIN message
     data = {
         "username":   username,
         "color":      color,
@@ -103,42 +62,44 @@ def send_join(username, color, head_style="classic", head_emoji=None, chat_port=
     return "JOIN:" + json.dumps(data)
 
 def send_move(direction):
-    """Player sends their snake's direction. direction = UP, DOWN, LEFT, or RIGHT."""
+    #We send the player's movement direction to the server using this function
+    #It tells the server how the snake should move during the next game update
     return f"MOVE:{direction}"
 
 
 def send_challenge(opponent):
-    """Player wants to challenge another player to a game."""
+    #It sends a challenge request to another player
+    #It used when the player clicks on the challenge button in the lobby 
     return f"CHALLENGE:{opponent}"
 
 
 def send_accept(opponent):
-    """Player accepts a challenge from someone."""
+    #It sends an accept message which is used when a player gets a challenge request and chooses to accept
     return f"ACCEPT:{opponent}"
 
 
 def send_decline(opponent):
-    """Player declines a challenge from someone."""
+    #It rejects a challenge, same idea as the above but here it rejects the message.
     return f"DECLINE:{opponent}"
 
 
 def send_watch():
-    """A fan/spectator wants to watch the current game (advanced feature)."""
+   #It is used to watch an active match between two players
     return "WATCH"
 
 
 def send_chat(message):
-    """Player sends a chat message to the other player (advanced feature)."""
+    #It allows the players to communicate with eachother using built-in chat system
     return f"CHAT:{message}"
 
 
 def send_play_bot():
-    """Player wants to start a solo game against the bot."""
+    #This is specific for the AI snake where a player can chose to play against
     return "PLAY_BOT"
 
 
 def send_leave_watch():
-    """Spectator wants to stop watching and return to lobby."""
+    #It gives the spectator option to exit the match 
     return "LEAVE_WATCH"
 
 
@@ -148,66 +109,45 @@ def send_leave_watch():
 # =============================================================================
 
 def username_taken():
-    """Server tells the client: 'sorry, that name is already in use'."""
+    #tells the client that the username it typed is already taken
     return "USERNAME_TAKEN"
 
 
 def username_ok():
-    """Server tells the client: 'your name was accepted, you're in'."""
+    #tells the client that the username is accepted
     return "USERNAME_OK"
 
 
 def players_list(players):
-    """
-    Server sends the list of online players.
-
-    Parameters:
-        players: list of dicts, e.g.:
-            [{"username": "Lara", "color": [0,180,50],
-              "head_style": "emoji", "head_emoji": "^.^", "status": "lobby"}, ...]
-
-    Returns:
-        Formatted message string like: PLAYERS_LIST:[{...}]
-    """
+    #This message is used whenevr the lobby needs to be updated
+    #It sends a message containing the current players
     return "PLAYERS_LIST:" + json.dumps(players)
 
 
 def challenge_from(challenger):
-    """Server tells a player: 'hey, this person wants to fight you'."""
+    #it creates a message telling a player that someone challenged them
     return f"CHALLENGE_FROM:{challenger}"
 
 
 def challenge_accepted(opponent):
-    """Server tells the challenger: 'your opponent said yes, get ready'."""
+   #tells the player that their challenge got accepted 
     return f"CHALLENGE_ACCEPTED:{opponent}"
 
 
 def challenge_declined(opponent):
-    """Server tells the challenger: 'your opponent said no'."""
+    #same as the previous function but instead it gets rejected
     return f"CHALLENGE_DECLINED:{opponent}"
 
 
 def game_start():
-    """Server tells both players: 'the game is starting NOW'."""
+   #it tells both players that the game should start
     return "GAME_START"
 
 
 def game_state(player1, player2, pies, obstacles, time_left,
                sudden_death=False, fire_tiles=None, move_id=0):
-    """
-    Server sends a full snapshot of the game to both players.
-    This gets called every time the game updates (many times per second).
-
-    Each player dict looks like:
-        {"username": "john", "snake": [(col, row), ...],   # grid coordinates e.g. (3, 7)
-         "color": [0,180,50], "health": 80}
-
-    pies:         list of (x, y, type) for each pie on the board
-    obstacles:    list of (x, y, type) for each obstacle
-    time_left:    seconds remaining in the game (int)
-    sudden_death: True once the last 30 seconds begin
-    fire_tiles:   list of (col, row) that are on fire — empty until SD triggers
-    """
+  #this is a very important function because it is sent many times during the match 
+  #It allows every player to see the same board, snake positions, healtg values, pies, obstacles, timer, and sudden death effects
     state = {
         "player1": {
             "username":   player1["username"],
@@ -240,11 +180,7 @@ def game_state(player1, player2, pies, obstacles, time_left,
 
 
 def game_over(winner, health1, health2, reason="normal"):
-    """
-    Server tells both players the game ended.
-    winner is a username string, or "TIE" if it's a draw.
-    reason: "normal" | "disconnect"
-    """
+   #it creates a message telling that the game has ended 
     data = {
         "winner":  winner,
         "health1": health1,
@@ -255,49 +191,49 @@ def game_over(winner, health1, health2, reason="normal"):
 
 
 def waiting():
-    """Server tells a player: 'hang tight, waiting for another player'."""
+   #creates a message telling the client to wait 
     return "WAITING"
 
 
 def fan_joined(username):
-    """Server tells the players: 'a spectator just joined to watch'."""
+    #creates a message telling the players that a spectator has joined the match 
     return f"FAN_JOINED:{username}"
 
 
 def player_disconnected(username):
-    """Server tells everyone: 'this player just disconnected'."""
+    #tells the client that the player on the other end disconnected
     return f"DISCONNECTED:{username}"
 
 
 # ── Rematch ───────────────────────────────────────────────────────────────────
 
 def send_rematch():
-    """Client tells the server: 'I want a rematch against my last opponent'."""
+   #creates a message from the client asking the server for a rematch 
     return "REMATCH"
 
 
 def send_decline_rematch():
-    """Client tells the server: 'I am leaving — cancel any pending rematch'."""
+    #this message is sent when the server does not want a rematch anymore 
     return "DECLINE_REMATCH"
 
 
 def rematch_from(username):
-    """Server tells a player: 'your last opponent wants a rematch'."""
+    #message telling a player that the ir previous opponent wants a rematch
     return f"REMATCH_FROM:{username}"
 
 
 def rematch_queued(opponent):
-    """Server tells the requester: 'your rematch request was recorded, waiting for opponent'."""
+    #confirms that the rematch request was saved
     return f"REMATCH_QUEUED:{opponent}"
 
 
 def rematch_start():
-    """Server tells both players: 'rematch accepted, new game starting'."""
+#message telling both players that the rematch is starting 
     return "REMATCH_START"
 
 
 def rematch_declined(username):
-    """Server tells a player: 'your opponent declined the rematch'."""
+#messsage telling a player that the opponent declined the rematch 
     return f"REMATCH_DECLINED:{username}"
 
 
@@ -307,14 +243,8 @@ def rematch_declined(username):
 # =============================================================================
 
 def parse(msg):
-    """
-    Takes any raw message string and splits it into (header, body).
-
-    Example:
-        parse("MOVE:UP")            → ("MOVE", "UP")
-        parse("GAME_STATE:{...}")   → ("GAME_STATE", "{...}")
-        parse("WAITING")            → ("WAITING", None)
-    """
+ #this function splits messages into the header and the body
+ #the header tells us the type of message it is and the body contains the actual data 
     if ":" in msg:
         header, body = msg.split(":", 1)
         return header.strip(), body.strip()
@@ -322,28 +252,26 @@ def parse(msg):
 
 
 def parse_game_state(body):
-    """Converts GAME_STATE JSON body back into a Python dictionary."""
+#it converts the game state message body from JSON text back to python dictionary
     return json.loads(body)
 
 
 def parse_players_list(body):
-    """Converts PLAYERS_LIST JSON body back into a Python list."""
+#it converts players list message body from JSON text back into a python list 
     return json.loads(body)
 
 
 def parse_join(body):
-    """Converts JOIN JSON body back into a Python dictionary.
-    Returns dict with keys: username, color, head_style, head_emoji."""
+    #converts the JOIN message body from JSON text back into python dictionary
     return json.loads(body)
 
 
 def parse_game_over(body):
-    """Converts GAME_OVER JSON body back into winner, health1, health2, reason."""
+#converts game over // // // (same as above)
     data = json.loads(body)
     return data["winner"], data["health1"], data["health2"], data.get("reason", "normal")
 
 def parse_chat(body):
-    """Splits 'username:message' from a CHAT body.
-    Returns (sender_username, message)."""
+   #it splits a chat message body into sender username and the actual message text
     parts = body.split(":", 1)
     return (parts[0], parts[1]) if len(parts) == 2 else (body, "")
